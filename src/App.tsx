@@ -19,11 +19,12 @@ import {
   StopFilled,
   TeamOutlined,
 } from '@ant-design/icons'
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { Button, Checkbox, Dropdown, message, Modal, Progress, Space, Table, Tag, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import ConfigPanel from './ConfigPanel'
-import { defaultConfig, initialInstances, initialLogs, initialMods } from './data'
-import type { LogLine, ModItem, ServerConfig, ServerInstance } from './types'
+import { defaultConfig, defaultGlobalSettings, initialInstances, initialLogs, initialMods } from './data'
+import type { GlobalSettings, LogLine, ModItem, ServerConfig, ServerInstance } from './types'
 
 const { Text } = Typography
 
@@ -70,6 +71,10 @@ export default function App() {
   const [mods, setMods] = useState<ModItem[]>(initialMods)
   const [logs, setLogs] = useState<LogLine[]>(initialLogs)
   const [dirty, setDirty] = useState(false)
+  const [globalSettings, setGlobalSettings] = useState<GlobalSettings>(() => {
+    try { return { ...defaultGlobalSettings, ...JSON.parse(localStorage.getItem('asa-global-settings') ?? '{}') } }
+    catch { return defaultGlobalSettings }
+  })
   const [messageApi, contextHolder] = message.useMessage()
   const [modal, modalContext] = Modal.useModal()
 
@@ -140,6 +145,29 @@ export default function App() {
     setDirty(true)
   }
 
+  const saveGlobalSettings = (newSettings: GlobalSettings) => {
+    setGlobalSettings(newSettings)
+    localStorage.setItem('asa-global-settings', JSON.stringify(newSettings))
+    messageApi.success('全局配置已保存')
+  }
+
+  const openSettingsWindow = () => {
+    const webview = new WebviewWindow('settings', {
+      url: '/index.html?window=settings',
+      title: '全局设置 (Global Settings)',
+      width: 500,
+      height: 700,
+      center: true,
+      resizable: false,
+    });
+    
+    webview.once('tauri://error', function (e) {
+      console.error('Error creating window', e);
+      // Window might already exist, so try to focus it
+      WebviewWindow.getByLabel('settings').then(w => w?.setFocus());
+    });
+  }
+
   const columns: ColumnsType<ServerInstance> = useMemo(() => [
     {
       title: '实例名称', dataIndex: 'name', width: 112,
@@ -154,7 +182,7 @@ export default function App() {
     { title: '端口 / 查询', width: 96, render: (_, item) => <span className="mono-text">{item.gamePort} / {item.queryPort}</span> },
     {
       title: '玩家数 / 上限', width: 108,
-      render: (_, item) => <div className="player-cell"><span>{item.players} / {item.maxPlayers}</span><Progress percent={item.players / item.maxPlayers * 100} showInfo={false} size="small" strokeColor="#16cc79" trailColor="#152838" /></div>,
+      render: (_, item) => <div className="player-cell"><span>{item.players} / {item.maxPlayers}</span><Progress percent={item.players / item.maxPlayers * 100} showInfo={false} size="small" strokeColor="#16cc79" railColor="#152838" /></div>,
     },
     {
       title: '操作', width: 96,
@@ -178,7 +206,7 @@ export default function App() {
           <Button danger icon={<StopFilled />} onClick={() => selectedRows.forEach((id) => { const item = instances.find((i) => i.id === id); if (item) stopInstance(item) })}>停止所选</Button>
           <Button icon={<SaveOutlined />} onClick={saveConfig}>保存配置</Button>
           <Button className="apply-button" icon={<ReloadOutlined />} onClick={applyConfig}>应用并重启</Button>
-          <Button icon={<SettingOutlined />} aria-label="全局设置" />
+          <Button icon={<SettingOutlined />} aria-label="全局设置" onClick={openSettingsWindow} />
         </div>
       </header>
 

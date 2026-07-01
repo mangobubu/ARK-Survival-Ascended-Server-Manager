@@ -3,7 +3,10 @@ import { createRoot } from 'react-dom/client'
 import { ConfigProvider, theme } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import App from './App'
+import SettingsWindow from './SettingsWindow'
 import './styles.css'
+
+const isSettingsWindow = new URLSearchParams(window.location.search).get('window') === 'settings'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -38,7 +41,7 @@ createRoot(document.getElementById('root')!).render(
         },
       }}
     >
-      <App />
+      {isSettingsWindow ? <SettingsWindow /> : <App />}
     </ConfigProvider>
   </StrictMode>,
 )

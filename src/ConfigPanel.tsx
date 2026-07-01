@@ -102,7 +102,15 @@ function Field({ label, tip, children, wide = false }: { label: string; tip?: st
 }
 
 function NumberField({ value, onChange, min = 0, max, step = 1, addonAfter }: { value: number; onChange: (value: number) => void; min?: number; max?: number; step?: number; addonAfter?: string }) {
-  return <InputNumber value={value} min={min} max={max} step={step} addonAfter={addonAfter} onChange={(next) => onChange(next ?? min)} />
+  if (addonAfter) {
+    return (
+      <Space.Compact>
+        <InputNumber value={value} min={min} max={max} step={step} onChange={(next) => onChange(next ?? min)} />
+        <Input value={addonAfter} disabled style={{ width: '48px', textAlign: 'center', padding: '4px 0' }} />
+      </Space.Compact>
+    )
+  }
+  return <InputNumber value={value} min={min} max={max} step={step} onChange={(next) => onChange(next ?? min)} />
 }
 
 export default function ConfigPanel({ instance, config, mods, dirty, onConfigChange, onModsChange, onSave, onApply }: ConfigPanelProps) {
@@ -206,7 +214,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
         <Field label="启动前更新 MOD"><Switch checked={config.autoUpdateMods} onChange={(v) => set('autoUpdateMods', v)} /></Field>
         <Field label="崩溃后自动重启"><Switch checked={config.restartOnCrash} onChange={(v) => set('restartOnCrash', v)} /></Field>
         <Field label="停止前强制保存"><Switch checked={config.saveOnStop} onChange={(v) => set('saveOnStop', v)} /></Field>
-        <Alert type="info" showIcon message="运行中的实例保存配置后，需要重启才能使大多数参数生效。" />
+        <Alert type="info" showIcon title="运行中的实例保存配置后，需要重启才能使大多数参数生效。" />
       </SectionCard>
     </AccordionGroup>
   )
@@ -305,7 +313,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
         <Field label="物品上传过期"><NumberField value={config.tributeItemExpirationSeconds} min={0} max={31536000} step={3600} onChange={(v) => set('tributeItemExpirationSeconds', v)} addonAfter="秒" /></Field>
         <Field label="集群共享目录" wide><Input value={config.clusterDirOverride} onChange={(e) => set('clusterDirOverride', e.target.value)} /></Field>
         <Field label="禁用非集群传输路径"><Switch checked={config.noTransferFromFiltering} onChange={(v) => set('noTransferFromFiltering', v)} /></Field>
-        <Alert type="warning" showIcon message="跨服集群应统一 Cluster ID，并显式设置上传/下载规则。" />
+        <Alert type="warning" showIcon title="跨服集群应统一 Cluster ID，并显式设置上传/下载规则。" />
       </SectionCard>
 
       {(isAberration || isLostColony) && (
@@ -363,7 +371,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
         <Field label="内存告警阈值"><NumberField value={config.memoryWarningGb} min={4} max={256} onChange={(v) => set('memoryWarningGb', v)} addonAfter="GB" /></Field>
         <Field label="使用全部可用核心"><Switch checked={config.useAllCores} onChange={(v) => set('useAllCores', v)} /></Field>
         <Field label="禁用 BattlEye"><Switch checked={config.noBattlEye} onChange={(v) => set('noBattlEye', v)} /></Field>
-        <Alert type="info" showIcon message="资源阈值由管理器监控，不会写入 ARK 的 INI 文件。" />
+        <Alert type="info" showIcon title="资源阈值由管理器监控，不会写入 ARK 的 INI 文件。" />
       </SectionCard>
 
       <SectionCard title="网络与 RCON 调优" icon={<CloudSyncOutlined />} note="谨慎修改">
@@ -371,8 +379,8 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
         <Field label="客户端速率上限" tip="MaxClientRate"><NumberField value={config.maxClientRate} min={15000} max={1000000} step={5000} onChange={(v) => set('maxClientRate', v)} addonAfter="B/s" /></Field>
         <Field label="RCON 输出缓冲"><NumberField value={config.rconBufferSize} min={1000} max={64000} step={1000} onChange={(v) => set('rconBufferSize', v)} addonAfter="行" /></Field>
         <div className="resource-meter">
-          <div><span>CPU 预算</span><span>62%</span></div><Progress percent={62} showInfo={false} strokeColor="#00b8ff" trailColor="#10273a" />
-          <div><span>内存预算</span><span>13.6 / {config.memoryWarningGb} GB</span></div><Progress percent={Math.round(13.6 / config.memoryWarningGb * 100)} showInfo={false} strokeColor="#18cf7a" trailColor="#10273a" />
+          <div><span>CPU 预算</span><span>62%</span></div><Progress percent={62} showInfo={false} strokeColor="#00b8ff" railColor="#10273a" />
+          <div><span>内存预算</span><span>13.6 / {config.memoryWarningGb} GB</span></div><Progress percent={Math.round(13.6 / config.memoryWarningGb * 100)} showInfo={false} strokeColor="#18cf7a" railColor="#10273a" />
         </div>
       </SectionCard>
 
@@ -401,7 +409,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
           <span>?SessionName={encodeURIComponent(config.sessionName)}?Port={config.gamePort}?RCONPort={config.rconPort}</span>
           <span>{launchArgs}</span>
         </div>
-        <Alert type="warning" showIcon message="性能参数没有通用最优值。禁用冬眠等选项可能显著提高资源占用。" />
+        <Alert type="warning" showIcon title="性能参数没有通用最优值。禁用冬眠等选项可能显著提高资源占用。" />
       </SectionCard>
     </AccordionGroup>
   )

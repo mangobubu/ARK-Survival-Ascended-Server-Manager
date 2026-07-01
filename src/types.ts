@@ -1,5 +1,19 @@
 export type ServerStatus = 'running' | 'stopped' | 'starting'
 
+export interface GlobalSettings {
+  steamCmdPath: string
+  steamCmdLoginMode: 'anonymous' | 'account'
+  steamCmdUsername?: string
+  steamCmdPassword?: string
+  serverStoragePath: string
+  backupStoragePath: string
+  language: 'zh-CN' | 'en-US'
+  theme: 'dark' | 'light' | 'system'
+  autoUpdateOnStart: boolean
+  autoRestartOnCrash: boolean
+  maxBackupRetention: number
+}
+
 export interface ServerInstance {
   id: string
   name: string

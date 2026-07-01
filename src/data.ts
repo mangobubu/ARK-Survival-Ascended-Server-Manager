@@ -1,4 +1,18 @@
-import type { LogLine, ModItem, ServerConfig, ServerInstance } from './types'
+import type { GlobalSettings, LogLine, ModItem, ServerConfig, ServerInstance } from './types'
+
+export const defaultGlobalSettings: GlobalSettings = {
+  steamCmdPath: 'C:\\SteamCMD',
+  steamCmdLoginMode: 'anonymous',
+  steamCmdUsername: '',
+  steamCmdPassword: '',
+  serverStoragePath: 'D:\\ASA-Server',
+  backupStoragePath: 'D:\\ASA-Backups',
+  language: 'zh-CN',
+  theme: 'dark',
+  autoUpdateOnStart: true,
+  autoRestartOnCrash: true,
+  maxBackupRetention: 7,
+}
 
 export const initialInstances: ServerInstance[] = [
   { id: 'asa-01', name: 'ASA-01', map: 'The Island', mapCode: 'TheIsland_WP', mode: 'PvE', status: 'running', gamePort: 7777, queryPort: 27015, players: 24, maxPlayers: 30 },
