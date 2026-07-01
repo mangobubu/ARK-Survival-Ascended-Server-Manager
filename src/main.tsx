@@ -7,6 +7,7 @@ import SettingsWindow from './SettingsWindow'
 import './styles.css'
 
 const isSettingsWindow = new URLSearchParams(window.location.search).get('window') === 'settings'
+document.documentElement.classList.toggle('settings-document', isSettingsWindow)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

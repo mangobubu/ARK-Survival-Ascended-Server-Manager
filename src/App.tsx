@@ -155,10 +155,12 @@ export default function App() {
     const webview = new WebviewWindow('settings', {
       url: '/index.html?window=settings',
       title: '全局设置 (Global Settings)',
-      width: 500,
-      height: 700,
+      width: 860,
+      height: 660,
+      minWidth: 720,
+      minHeight: 560,
       center: true,
-      resizable: false,
+      resizable: true,
     });
     
     webview.once('tauri://error', function (e) {

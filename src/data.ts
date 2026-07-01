@@ -2,9 +2,6 @@ import type { GlobalSettings, LogLine, ModItem, ServerConfig, ServerInstance } f
 
 export const defaultGlobalSettings: GlobalSettings = {
   steamCmdPath: 'C:\\SteamCMD',
-  steamCmdLoginMode: 'anonymous',
-  steamCmdUsername: '',
-  steamCmdPassword: '',
   serverStoragePath: 'D:\\ASA-Server',
   backupStoragePath: 'D:\\ASA-Backups',
   language: 'zh-CN',
