@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   BgColorsOutlined,
   CloudSyncOutlined,
@@ -13,7 +13,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Button, Form, Input, InputNumber, Radio, Select, Space, Switch, Typography, message } from 'antd'
-import { loadGlobalSettings, saveGlobalSettings } from './globalSettings'
+import { loadGlobalSettings, loadGlobalSettingsFromBackend, saveGlobalSettings } from './globalSettings'
 import type { GlobalSettings, SteamCmdCheck } from './types'
 
 const { Text, Title } = Typography
@@ -22,7 +22,7 @@ export default function SettingsWindow() {
   const [form] = Form.useForm<GlobalSettings>()
   const [messageApi, contextHolder] = message.useMessage()
   const [selectingPath, setSelectingPath] = useState<keyof GlobalSettings | null>(null)
-  const [settings] = useState<GlobalSettings>(loadGlobalSettings)
+  const [settings, setSettings] = useState<GlobalSettings>(loadGlobalSettings)
   const [saving, setSaving] = useState(false)
 
   const handleFinish = async (values: GlobalSettings) => {
@@ -37,8 +37,8 @@ export default function SettingsWindow() {
         }
         steamCmdPath = check.path
       }
-      const next = { ...values, steamCmdPath }
-      saveGlobalSettings(next)
+      const next = await saveGlobalSettings({ ...values, steamCmdPath })
+      setSettings(next)
       messageApi.success('全局设置已保存')
       window.setTimeout(() => {
         void getCurrentWindow().close()
@@ -49,6 +49,15 @@ export default function SettingsWindow() {
       setSaving(false)
     }
   }
+
+  useEffect(() => {
+    void loadGlobalSettingsFromBackend().then((loaded) => {
+      setSettings(loaded)
+      form.setFieldsValue(loaded)
+    }).catch((error) => {
+      messageApi.error(`无法加载全局设置：${String(error)}`)
+    })
+  }, [form, messageApi])
 
   const selectDirectory = async (
     field: 'steamCmdPath' | 'serverStoragePath' | 'backupStoragePath',

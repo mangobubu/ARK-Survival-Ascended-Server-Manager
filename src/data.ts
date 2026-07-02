@@ -11,17 +11,7 @@ export const defaultGlobalSettings: GlobalSettings = {
   maxBackupRetention: 7,
 }
 
-export const initialInstances: ServerInstance[] = [
-  { id: 'asa-01', name: 'ASA-01', map: 'The Island', mapCode: 'TheIsland_WP', mode: 'PvE', status: 'running', gamePort: 7777, queryPort: 27015, players: 24, maxPlayers: 30 },
-  { id: 'asa-02', name: 'ASA-02', map: 'Scorched Earth', mapCode: 'ScorchedEarth_WP', mode: 'PvE', status: 'running', gamePort: 7787, queryPort: 27025, players: 18, maxPlayers: 30 },
-  { id: 'asa-03', name: 'ASA-03', map: 'The Center', mapCode: 'TheCenter_WP', mode: 'PvE', status: 'running', gamePort: 7797, queryPort: 27035, players: 12, maxPlayers: 30 },
-  { id: 'asa-04', name: 'ASA-04', map: 'Aberration', mapCode: 'Aberration_WP', mode: 'PvP', status: 'stopped', gamePort: 7807, queryPort: 27045, players: 0, maxPlayers: 30 },
-  { id: 'asa-05', name: 'ASA-05', map: 'Extinction', mapCode: 'Extinction_WP', mode: 'PvE', status: 'running', gamePort: 7817, queryPort: 27055, players: 15, maxPlayers: 30 },
-  { id: 'asa-06', name: 'ASA-06', map: 'Astraeos', mapCode: 'Astraeos_WP', mode: 'PvE', status: 'stopped', gamePort: 7827, queryPort: 27065, players: 0, maxPlayers: 30 },
-  { id: 'asa-07', name: 'ASA-07', map: 'Ragnarok', mapCode: 'Ragnarok_WP', mode: 'PvE', status: 'running', gamePort: 7837, queryPort: 27075, players: 21, maxPlayers: 30 },
-  { id: 'asa-08', name: 'ASA-08', map: 'Valguero', mapCode: 'Valguero_WP', mode: 'PvE', status: 'stopped', gamePort: 7847, queryPort: 27085, players: 0, maxPlayers: 30 },
-  { id: 'asa-09', name: 'ASA-09', map: 'Lost Colony', mapCode: 'LostColony_WP', mode: 'PvE', status: 'stopped', gamePort: 7857, queryPort: 27095, players: 0, maxPlayers: 30 },
-]
+export const initialInstances: ServerInstance[] = []
 
 export const serverMapOptions = [
   { name: 'The Island', zhName: '孤岛', code: 'TheIsland_WP' },
@@ -35,22 +25,9 @@ export const serverMapOptions = [
   { name: 'Lost Colony', zhName: '失落殖民地', code: 'LostColony_WP' },
 ]
 
-export const initialLogs: LogLine[] = [
-  { id: 1, time: '16:45:12', instance: 'ASA-01', level: 'success', message: '启动成功，地图：The Island，玩家数：24/30' },
-  { id: 2, time: '16:45:15', instance: 'ASA-02', level: 'info', message: '定时重启已开启，等待后台生效' },
-  { id: 3, time: '16:45:23', instance: 'ASA-03', level: 'error', message: '实例未响应，已停止' },
-  { id: 4, time: '16:45:30', instance: 'ASA-04', level: 'success', message: '玩家数量更新：44/60' },
-  { id: 5, time: '16:45:42', instance: 'ASA-02', level: 'success', message: '自动备份完成，备份文件大小：2.1 GB' },
-  { id: 6, time: '16:45:50', instance: 'ASA-04', level: 'success', message: '配置保存成功' },
-  { id: 7, time: '16:46:02', instance: 'ASA-01', level: 'info', message: '玩家数量更新：25/30' },
-]
+export const initialLogs: LogLine[] = []
 
-export const initialMods: ModItem[] = [
-  { id: '928708', name: 'Svartalfheim Armory', version: '1.18.2', size: '246 MB', enabled: true },
-  { id: '929578', name: 'Utilities Plus', version: '4.7.0', size: '92 MB', enabled: true },
-  { id: '926956', name: 'Super Spyglass Plus', version: '2.4.1', size: '31 MB', enabled: true, updateAvailable: true },
-  { id: '930115', name: 'QoL+', version: '1.6.8', size: '508 MB', enabled: false },
-]
+export const initialMods: ModItem[] = []
 
 export const defaultConfig: ServerConfig = {
   sessionName: '方舟进化 · 孤岛生存', serverPassword: '', spectatorPassword: '', adminPassword: 'ark-admin-2026', gamePort: 7777, queryPort: 27015,

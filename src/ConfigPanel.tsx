@@ -50,6 +50,8 @@ interface ConfigPanelProps {
   onModsChange: (mods: ModItem[]) => void
   onSave: () => void
   onApply: () => void
+  onCheckModUpdates: () => void
+  checkingMods?: boolean
 }
 
 const AccordionContext = createContext<{
@@ -113,7 +115,7 @@ function NumberField({ value, onChange, min = 0, max, step = 1, addonAfter }: { 
   return <InputNumber value={value} min={min} max={max} step={step} onChange={(next) => onChange(next ?? min)} />
 }
 
-export default function ConfigPanel({ instance, config, mods, dirty, onConfigChange, onModsChange, onSave, onApply }: ConfigPanelProps) {
+export default function ConfigPanel({ instance, config, mods, dirty, onConfigChange, onModsChange, onSave, onApply, onCheckModUpdates, checkingMods = false }: ConfigPanelProps) {
   const [modModalOpen, setModModalOpen] = useState(false)
   const [modId, setModId] = useState('')
   const [activeTab, setActiveTab] = useState('basic')
@@ -420,7 +422,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
         <div className="mod-toolbar">
           <div className="mod-toolbar__actions">
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setModModalOpen(true)}>添加 MOD</Button>
-            <Button icon={<ReloadOutlined />}>检查更新</Button>
+            <Button loading={checkingMods} icon={<ReloadOutlined />} onClick={onCheckModUpdates}>检查更新</Button>
           </div>
           <Text type="secondary">按列表顺序加载，靠上的 MOD 优先加载</Text>
         </div>
@@ -492,7 +494,9 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
         <div className="config-title-text"><span className="ark-mark">✣</span><span>实例配置编辑</span><span className="config-title-separator">/</span><strong>{instance.name}</strong><span>·</span><span>{instance.map}</span></div>
         <Space>
           {dirty && <Tag color="gold">有未保存修改</Tag>}
-          <Tag color={instance.status === 'running' ? 'success' : 'error'}>{instance.status === 'running' ? '● 运行中' : '● 已停止'}</Tag>
+          <Tag color={instance.status === 'running' ? 'success' : instance.status === 'error' ? 'error' : ['starting', 'updating', 'backingUp'].includes(instance.status) ? 'processing' : 'default'}>
+            {instance.status === 'running' ? '● 运行中' : instance.status === 'starting' ? '● 启动中' : instance.status === 'updating' ? '● 更新中' : instance.status === 'backingUp' ? '● 备份中' : instance.status === 'error' ? '● 异常' : '● 已停止'}
+          </Tag>
         </Space>
       </div>
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabs} />

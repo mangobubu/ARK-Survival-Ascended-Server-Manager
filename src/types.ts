@@ -1,4 +1,4 @@
-export type ServerStatus = 'running' | 'stopped' | 'starting'
+export type ServerStatus = 'running' | 'stopped' | 'starting' | 'updating' | 'backingUp' | 'error'
 
 export interface GlobalSettings {
   steamCmdPath: string
@@ -42,9 +42,28 @@ export interface ServerInstance {
   queryPort: number
   players: number
   maxPlayers: number
+  installPath: string
+  rconPort: number
+  clusterId: string
+  description: string
+  pid: number | null
+  lastStartedAt: string | null
+  lastStoppedAt: string | null
+  versionState: string
+  lastError: string | null
 }
 
-export interface AddInstancePayload extends ServerInstance {
+export interface AddInstancePayload {
+  id?: string
+  name: string
+  map: string
+  mapCode: string
+  mode: 'PvE' | 'PvP'
+  status?: ServerStatus
+  gamePort: number
+  queryPort: number
+  players?: number
+  maxPlayers: number
   installPath: string
   rconPort: number
   clusterId: string
@@ -52,6 +71,11 @@ export interface AddInstancePayload extends ServerInstance {
   adminPassword: string
   autoInstall: boolean
   description: string
+}
+
+export interface InstanceCreatedEvent {
+  instance: ServerInstance
+  autoInstall: boolean
 }
 
 export interface ModItem {
@@ -69,6 +93,33 @@ export interface LogLine {
   instance: string
   level: 'info' | 'success' | 'warn' | 'error'
   message: string
+}
+
+export interface JobProgress {
+  jobId: string
+  instanceId: string | null
+  phase: string
+  percent: number | null
+  message: string
+  detail: string | null
+}
+
+export interface BackupItem {
+  instanceId: string
+  instanceName: string
+  path: string
+  sizeBytes: number
+  createdAt: string
+}
+
+export interface ExportResult {
+  path: string
+  exportedInstances: number
+}
+
+export interface ImportResult {
+  importedInstances: number
+  skippedInstances: number
 }
 
 export interface ServerConfig {

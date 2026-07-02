@@ -14,8 +14,9 @@ import {
 import { emitTo } from '@tauri-apps/api/event'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { Button, Form, Input, InputNumber, Radio, Select, Space, Switch, Typography, message } from 'antd'
+import { createInstance } from './backendApi'
 import { defaultConfig, defaultGlobalSettings, serverMapOptions } from './data'
-import type { AddInstancePayload } from './types'
+import type { AddInstancePayload, InstanceCreatedEvent } from './types'
 import { ADD_INSTANCE_CREATED_EVENT, MAIN_WINDOW_LABEL } from './windowEvents'
 
 const { Text, Title } = Typography
@@ -92,7 +93,6 @@ export default function AddInstanceWindow() {
   const handleFinish = async (values: AddInstanceFormValues) => {
     const map = serverMapOptions.find((item) => item.code === values.mapCode) ?? serverMapOptions[0]
     const payload: AddInstancePayload = {
-      id: `asa-${Date.now()}`,
       name: values.name.trim(),
       map: map.name,
       mapCode: map.code,
@@ -113,8 +113,10 @@ export default function AddInstanceWindow() {
 
     setSubmitting(true)
     try {
-      await emitTo(MAIN_WINDOW_LABEL, ADD_INSTANCE_CREATED_EVENT, payload)
-      messageApi.success('实例已添加到主窗口')
+      const instance = await createInstance(payload)
+      const eventPayload: InstanceCreatedEvent = { instance, autoInstall: payload.autoInstall }
+      await emitTo(MAIN_WINDOW_LABEL, ADD_INSTANCE_CREATED_EVENT, eventPayload)
+      messageApi.success('实例已创建')
       window.setTimeout(() => {
         void closeCurrentWindow()
       }, 420)

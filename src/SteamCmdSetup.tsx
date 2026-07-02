@@ -67,12 +67,15 @@ export default function SteamCmdSetup({ settings, onSettingsChange }: SteamCmdSe
 
   const applySteamCmdPath = useCallback((path: string) => {
     const next = { ...settings, steamCmdPath: path }
-    saveGlobalSettings(next)
-    onSettingsChange(next)
-    setAvailability('ready')
-    setGuideOpen(false)
-    setInstallError(null)
-  }, [onSettingsChange, settings])
+    void saveGlobalSettings(next).then((saved) => {
+      onSettingsChange(saved)
+      setAvailability('ready')
+      setGuideOpen(false)
+      setInstallError(null)
+    }).catch((error) => {
+      messageApi.error(`保存 SteamCMD 设置失败：${String(error)}`)
+    })
+  }, [messageApi, onSettingsChange, settings])
 
   const checkConfiguredPath = useCallback(async (showGuide: boolean) => {
     setAvailability('checking')
