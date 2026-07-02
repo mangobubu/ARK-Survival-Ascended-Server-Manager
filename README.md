@@ -18,17 +18,28 @@
 - **MOD 设置**：CurseForge MOD ID、加载顺序、启用状态、更新策略与 `ActiveMods` 预览。
 - **日志参数**：`-servergamelog`、部落日志 RCON 输出、管理员审计、轮转、保留和日志筛选。
 
-字段提示区分了 ARK 的 `GameUserSettings.ini`、`Game.ini`、启动参数，以及管理器自身的资源监控/轮转策略。当前版本是纯交互原型，保存操作写入浏览器 WebView 的 `localStorage`，尚未读写真实服务端文件或启动 ARK 进程。
+字段提示区分了 ARK 的 `GameUserSettings.ini`、`Game.ini`、启动参数，以及管理器自身的资源监控/轮转策略。全局设置仍保存在浏览器 WebView 的 `localStorage`，ARK 实例管理目前仍是交互原型，尚未读写真实服务端配置或启动 ARK 进程。
+
+## SteamCMD 初始化
+
+- 应用启动时会检查全局设置中的 SteamCMD 目录。
+- 可选择已有的 `steamcmd.exe`，或选择上级目录并由管理器下载 Valve 官方安装包。
+- 下载、解压和首次初始化均由 Rust 后台执行；Windows 下不会显示 SteamCMD 控制台窗口。
+- 下载界面显示百分比、实时速度、已下载大小和总大小，失败时不会覆盖已有非空目录。
+
+## 存储目录初始化
+
+- 主窗口启动后会检查全局设置中的服务器存储目录和备份存储目录。
+- 目录不存在时会自动递归创建；路径无效或创建失败时会在界面提示具体错误。
 
 ## 验证命令
 
 ```bash
 npm install
 npm run build
-npm run tauri build -- --no-bundle
+npm run tauri -- build --no-bundle
+npm run tauri -- dev
 ```
-
-按需求不自动运行应用；需要人工预览时再执行 `npm run tauri dev`。
 
 ## 参数参考
 

@@ -23,6 +23,18 @@ export const initialInstances: ServerInstance[] = [
   { id: 'asa-09', name: 'ASA-09', map: 'Lost Colony', mapCode: 'LostColony_WP', mode: 'PvE', status: 'stopped', gamePort: 7857, queryPort: 27095, players: 0, maxPlayers: 30 },
 ]
 
+export const serverMapOptions = [
+  { name: 'The Island', zhName: '孤岛', code: 'TheIsland_WP' },
+  { name: 'Scorched Earth', zhName: '焦土', code: 'ScorchedEarth_WP' },
+  { name: 'The Center', zhName: '中心岛', code: 'TheCenter_WP' },
+  { name: 'Aberration', zhName: '畸变', code: 'Aberration_WP' },
+  { name: 'Extinction', zhName: '灭绝', code: 'Extinction_WP' },
+  { name: 'Astraeos', zhName: '阿斯特拉奥斯', code: 'Astraeos_WP' },
+  { name: 'Ragnarok', zhName: '仙境', code: 'Ragnarok_WP' },
+  { name: 'Valguero', zhName: '瓦尔盖罗', code: 'Valguero_WP' },
+  { name: 'Lost Colony', zhName: '失落殖民地', code: 'LostColony_WP' },
+]
+
 export const initialLogs: LogLine[] = [
   { id: 1, time: '16:45:12', instance: 'ASA-01', level: 'success', message: '启动成功，地图：The Island，玩家数：24/30' },
   { id: 2, time: '16:45:15', instance: 'ASA-02', level: 'info', message: '定时重启已开启，等待后台生效' },

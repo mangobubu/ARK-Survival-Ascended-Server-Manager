@@ -11,6 +11,26 @@ export interface GlobalSettings {
   maxBackupRetention: number
 }
 
+export interface SteamCmdCheck {
+  path: string
+  executablePath: string
+  valid: boolean
+  reason: string | null
+}
+
+export interface SteamCmdProgress {
+  phase: 'downloading' | 'extracting' | 'initializing' | 'completed'
+  downloadedBytes: number
+  totalBytes: number | null
+  bytesPerSecond: number
+  message: string
+}
+
+export interface SteamCmdInstallResult {
+  path: string
+  executablePath: string
+}
+
 export interface ServerInstance {
   id: string
   name: string
@@ -22,6 +42,16 @@ export interface ServerInstance {
   queryPort: number
   players: number
   maxPlayers: number
+}
+
+export interface AddInstancePayload extends ServerInstance {
+  installPath: string
+  rconPort: number
+  clusterId: string
+  serverPassword: string
+  adminPassword: string
+  autoInstall: boolean
+  description: string
 }
 
 export interface ModItem {

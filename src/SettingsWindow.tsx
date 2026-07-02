@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   BgColorsOutlined,
   CloudSyncOutlined,
@@ -10,10 +10,11 @@ import {
   SettingOutlined,
 } from '@ant-design/icons'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Button, Form, Input, InputNumber, Radio, Select, Space, Switch, Typography, message } from 'antd'
-import { defaultGlobalSettings } from './data'
-import type { GlobalSettings } from './types'
+import { loadGlobalSettings, saveGlobalSettings } from './globalSettings'
+import type { GlobalSettings, SteamCmdCheck } from './types'
 
 const { Text, Title } = Typography
 
@@ -21,31 +22,32 @@ export default function SettingsWindow() {
   const [form] = Form.useForm<GlobalSettings>()
   const [messageApi, contextHolder] = message.useMessage()
   const [selectingPath, setSelectingPath] = useState<keyof GlobalSettings | null>(null)
-  const [settings] = useState<GlobalSettings>(() => {
+  const [settings] = useState<GlobalSettings>(loadGlobalSettings)
+  const [saving, setSaving] = useState(false)
+
+  const handleFinish = async (values: GlobalSettings) => {
+    setSaving(true)
     try {
-      const saved = JSON.parse(localStorage.getItem('asa-global-settings') ?? '{}') as Record<string, unknown>
-      delete saved.steamApiKey
-      delete saved.steamCmdLoginMode
-      delete saved.steamCmdUsername
-      delete saved.steamCmdPassword
-      return { ...defaultGlobalSettings, ...saved } as GlobalSettings
-    } catch {
-      return defaultGlobalSettings
+      let steamCmdPath = values.steamCmdPath
+      if (values.steamCmdPath !== settings.steamCmdPath) {
+        const check = await invoke<SteamCmdCheck>('check_steamcmd', { path: values.steamCmdPath })
+        if (!check.valid) {
+          messageApi.error(`SteamCMD 目录无效：${check.reason ?? '未找到 steamcmd.exe'}`)
+          return
+        }
+        steamCmdPath = check.path
+      }
+      const next = { ...values, steamCmdPath }
+      saveGlobalSettings(next)
+      messageApi.success('全局设置已保存')
+      window.setTimeout(() => {
+        void getCurrentWindow().close()
+      }, 600)
+    } catch (error) {
+      messageApi.error(`无法保存全局设置：${String(error)}`)
+    } finally {
+      setSaving(false)
     }
-  })
-
-  useEffect(() => {
-    form.setFieldsValue(settings)
-    localStorage.setItem('asa-global-settings', JSON.stringify(settings))
-  }, [settings, form])
-
-  const handleFinish = (values: GlobalSettings) => {
-    localStorage.setItem('asa-global-settings', JSON.stringify(values))
-    messageApi.success('全局设置已保存')
-
-    window.setTimeout(() => {
-      getCurrentWindow().close()
-    }, 600)
   }
 
   const selectDirectory = async (
@@ -64,6 +66,15 @@ export default function SettingsWindow() {
       })
 
       if (selectedPath) {
+        if (field === 'steamCmdPath') {
+          const check = await invoke<SteamCmdCheck>('check_steamcmd', { path: selectedPath })
+          if (!check.valid) {
+            messageApi.error(`SteamCMD 目录无效：${check.reason ?? '未找到 steamcmd.exe'}`)
+            return
+          }
+          form.setFieldValue(field, check.path)
+          return
+        }
         form.setFieldValue(field, selectedPath)
       }
     } catch (error) {
@@ -181,7 +192,7 @@ export default function SettingsWindow() {
           <Text type="secondary">设置仅保存在当前设备</Text>
           <Space>
             <Button onClick={() => getCurrentWindow().close()}>取消</Button>
-            <Button type="primary" icon={<SaveOutlined />} htmlType="submit">保存设置</Button>
+            <Button loading={saving} type="primary" icon={<SaveOutlined />} htmlType="submit">保存设置</Button>
           </Space>
         </footer>
       </Form>

@@ -11,7 +11,10 @@ html, body, #root { width: 100%; min-width: 1180px; height: 100%; margin: 0; ove
 
 html.settings-document,
 html.settings-document body,
-html.settings-document #root { min-width: 0; }
+html.settings-document #root,
+html.child-window-document,
+html.child-window-document body,
+html.child-window-document #root { min-width: 0; }
 
 body {
   height: 100vh;
@@ -258,6 +261,245 @@ button, input, textarea { font: inherit; }
 .ant-input-number-input, .ant-input { font-variant-numeric: tabular-nums; }
 .ant-tag { margin-inline-end: 0; }
 .ant-modal .ant-modal-content { border: 1px solid #17415f; }
+
+/* SteamCMD startup setup */
+.steamcmd-missing-alert {
+  flex: 0 0 auto;
+  margin-bottom: 10px;
+  border-color: rgba(255, 176, 32, .38);
+  background: linear-gradient(90deg, rgba(65, 42, 5, .72), rgba(28, 24, 12, .72));
+}
+.steamcmd-missing-alert .ant-alert-message { font-size: 12px; }
+.steamcmd-missing-alert .ant-alert-description { color: #9e8c69; font-size: 10px; }
+.steamcmd-warning-icon { color: #ffb020; }
+.steamcmd-guide-content { display: flex; flex-direction: column; gap: 14px; padding: 5px 0 2px; }
+.steamcmd-current-path {
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+  border: 1px solid #163a55;
+  border-radius: 5px;
+  color: #a8c8dc;
+  background: #03111d;
+  font-family: Consolas, "Microsoft YaHei UI", monospace;
+  font-size: 12px;
+}
+.steamcmd-install-progress { padding: 8px 0 4px; }
+.steamcmd-install-progress__heading { margin-bottom: 22px; display: flex; align-items: center; gap: 13px; }
+.steamcmd-install-progress__heading > div:nth-child(2) { flex: 1; min-width: 0; }
+.steamcmd-install-progress__heading h5 { margin: 0 0 3px; color: #eaf6ff; }
+.steamcmd-install-progress__icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #17608c;
+  border-radius: 9px;
+  color: #13b8ff;
+  background: rgba(8, 100, 150, .14);
+  font-size: 21px;
+}
+.steamcmd-progress-stats { margin: 16px 0 13px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+.steamcmd-progress-stats > div { padding: 10px 12px; border: 1px solid #12344d; border-radius: 5px; background: #041521; }
+.steamcmd-progress-stats span { display: block; margin-bottom: 4px; color: #70899c; font-size: 10px; }
+.steamcmd-progress-stats strong { color: #d8eaf6; font-size: 13px; font-variant-numeric: tabular-nums; }
+.steamcmd-progress-note { font-size: 10px; }
+
+/* Add instance native child window */
+.add-instance-window {
+  height: 100vh;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 78% -6%, rgba(18, 204, 121, .12), transparent 30%),
+    linear-gradient(145deg, #020b14 0%, #03111e 100%);
+}
+
+.add-instance-header {
+  flex: 0 0 78px;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid #123149;
+  background: rgba(3, 15, 26, .86);
+}
+
+.add-instance-header__mark {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #1a6d5a;
+  border-radius: 8px;
+  color: #16d17c;
+  background: linear-gradient(145deg, #0b302e, #071d2a);
+  box-shadow: 0 0 24px rgba(22, 209, 124, .12);
+  font-size: 20px;
+}
+
+.add-instance-header h3 { margin: 0 0 3px; color: #eff7ff; font-size: 20px; }
+.add-instance-header .ant-typography { color: #7892a5; font-size: 12px; }
+.add-instance-form { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.add-instance-content {
+  flex: 1;
+  min-height: 0;
+  padding: 18px 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.add-instance-main {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-color: #1a4d6d rgba(3, 15, 26, .55);
+  scrollbar-width: thin;
+}
+
+.add-instance-main::-webkit-scrollbar { width: 6px; }
+.add-instance-main::-webkit-scrollbar-thumb { border-radius: 6px; background: #1a4d6d; }
+
+.add-instance-section,
+.add-instance-preview {
+  min-width: 0;
+  border: 1px solid #123650;
+  border-radius: 7px;
+  background: linear-gradient(145deg, rgba(6, 26, 43, .96), rgba(3, 17, 29, .96));
+  box-shadow: 0 8px 26px rgba(0, 0, 0, .14);
+}
+
+.add-instance-section { padding: 14px 15px 12px; }
+.add-instance-section__title,
+.add-instance-preview__title {
+  margin-bottom: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #d8e8f4;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.add-instance-section__title .anticon { color: #16b8ff; }
+.add-instance-two-column { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.add-instance-three-column { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.add-instance-section .ant-form-item { min-width: 0; margin-bottom: 12px; }
+.add-instance-section .ant-form-item:last-child { margin-bottom: 0; }
+.add-instance-section .ant-form-item-label { padding-bottom: 5px; }
+.add-instance-section .ant-form-item-label > label { color: #aebfcd; font-size: 11px; }
+.add-instance-section .ant-input-affix-wrapper,
+.add-instance-section .ant-input,
+.add-instance-section .ant-input-number,
+.add-instance-section .ant-select-selector { background: #04131f !important; }
+.add-instance-section .ant-input-number,
+.add-instance-section .ant-input-number-group-wrapper,
+.add-instance-section .ant-select,
+.add-instance-section .ant-radio-group { width: 100%; }
+.add-instance-section .ant-radio-button-wrapper { width: 50%; text-align: center; }
+
+.add-instance-switch-row {
+  min-height: 61px;
+  padding: 9px 11px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #102e45;
+  border-radius: 6px;
+  background: rgba(2, 14, 24, .5);
+}
+
+.add-instance-switch-row > div:first-child { min-width: 0; display: flex; flex-direction: column; }
+.add-instance-switch-row strong { color: #bfd0dd; font-size: 11px; font-weight: 500; }
+.add-instance-switch-row span { margin-top: 3px; overflow: hidden; color: #627c90; font-size: 10px; white-space: nowrap; text-overflow: ellipsis; }
+.add-instance-switch-row .ant-form-item { margin: 0 0 0 auto; }
+.add-instance-switch-row--full { grid-column: 1 / -1; }
+
+.add-instance-preview {
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.add-instance-preview__title { color: #e2f2e9; }
+.add-instance-preview__title .anticon { color: #16d17c; }
+.add-instance-progress { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.add-instance-progress > div {
+  min-height: 35px;
+  padding: 8px 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  border: 1px solid #12324a;
+  border-radius: 5px;
+  background: rgba(2, 13, 23, .72);
+}
+.add-instance-progress span { color: #7893a6; font-size: 10px; }
+.add-instance-progress b { color: #16d17c; font-size: 11px; font-weight: 500; }
+
+.add-instance-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding-top: 13px;
+  border-top: 1px solid #102d44;
+}
+
+.add-instance-summary > div { min-width: 0; display: flex; justify-content: space-between; gap: 12px; }
+.add-instance-summary span { flex: 0 0 auto; color: #71899c; font-size: 10px; }
+.add-instance-summary strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #dceaf5;
+  font-size: 11px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.add-instance-path {
+  margin-top: auto;
+  padding: 11px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #164232;
+  border-radius: 5px;
+  color: #16d17c;
+  background: rgba(6, 35, 25, .55);
+  font-size: 11px;
+}
+
+.add-instance-preview__note {
+  display: block;
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.add-instance-footer {
+  flex: 0 0 64px;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid #123149;
+  background: rgba(3, 15, 26, .96);
+}
+.add-instance-footer > .ant-typography { font-size: 10px; }
 
 /* Global settings window */
 .settings-window {

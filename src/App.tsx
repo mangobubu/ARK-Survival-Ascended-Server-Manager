@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   AppstoreAddOutlined,
   CheckCircleOutlined,
@@ -20,11 +20,15 @@ import {
   TeamOutlined,
 } from '@ant-design/icons'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { listen } from '@tauri-apps/api/event'
 import { Button, Checkbox, Dropdown, message, Modal, Progress, Space, Table, Tag, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import ConfigPanel from './ConfigPanel'
-import { defaultConfig, defaultGlobalSettings, initialInstances, initialLogs, initialMods } from './data'
-import type { GlobalSettings, LogLine, ModItem, ServerConfig, ServerInstance } from './types'
+import { defaultConfig, initialInstances, initialLogs, initialMods } from './data'
+import { ensureGlobalStorageDirectories, loadGlobalSettings, subscribeGlobalSettings } from './globalSettings'
+import SteamCmdSetup from './SteamCmdSetup'
+import type { AddInstancePayload, GlobalSettings, LogLine, ModItem, ServerConfig, ServerInstance } from './types'
+import { ADD_INSTANCE_CREATED_EVENT, ADD_INSTANCE_WINDOW_LABEL } from './windowEvents'
 
 const { Text } = Typography
 
@@ -71,10 +75,7 @@ export default function App() {
   const [mods, setMods] = useState<ModItem[]>(initialMods)
   const [logs, setLogs] = useState<LogLine[]>(initialLogs)
   const [dirty, setDirty] = useState(false)
-  const [globalSettings, setGlobalSettings] = useState<GlobalSettings>(() => {
-    try { return { ...defaultGlobalSettings, ...JSON.parse(localStorage.getItem('asa-global-settings') ?? '{}') } }
-    catch { return defaultGlobalSettings }
-  })
+  const [globalSettings, setGlobalSettings] = useState<GlobalSettings>(loadGlobalSettings)
   const [messageApi, contextHolder] = message.useMessage()
   const [modal, modalContext] = Modal.useModal()
 
@@ -145,11 +146,103 @@ export default function App() {
     setDirty(true)
   }
 
-  const saveGlobalSettings = (newSettings: GlobalSettings) => {
-    setGlobalSettings(newSettings)
-    localStorage.setItem('asa-global-settings', JSON.stringify(newSettings))
-    messageApi.success('全局配置已保存')
+  const openAddInstanceWindow = async () => {
+    try {
+      const existing = await WebviewWindow.getByLabel(ADD_INSTANCE_WINDOW_LABEL)
+      if (existing) {
+        await existing.setFocus()
+        return
+      }
+
+      const nextIndex = instances.length + 1
+      const maxGamePort = Math.max(...instances.map((item) => item.gamePort))
+      const maxQueryPort = Math.max(...instances.map((item) => item.queryPort))
+      const params = new URLSearchParams({
+        window: 'add-instance',
+        index: String(nextIndex),
+        gamePort: String(maxGamePort + 10),
+        queryPort: String(maxQueryPort + 10),
+        rconPort: String(config.rconPort + nextIndex),
+        serverRoot: globalSettings.serverStoragePath,
+      })
+
+      const webview = new WebviewWindow(ADD_INSTANCE_WINDOW_LABEL, {
+        url: `/index.html?${params.toString()}`,
+        title: '添加服务器实例',
+        width: 760,
+        height: 690,
+        minWidth: 720,
+        minHeight: 640,
+        maxWidth: 760,
+        maxHeight: 690,
+        center: true,
+        resizable: false,
+        maximizable: false,
+        parent: 'main',
+        backgroundColor: '#020a13',
+      })
+
+      webview.once('tauri://error', (event) => {
+        console.error('创建添加实例窗口失败', event)
+        void WebviewWindow.getByLabel(ADD_INSTANCE_WINDOW_LABEL).then((window) => window?.setFocus())
+      })
+    } catch (error) {
+      messageApi.error(`无法打开添加实例窗口：${String(error)}`)
+    }
   }
+
+  useEffect(() => {
+    const unsubscribe = subscribeGlobalSettings(setGlobalSettings)
+
+    void ensureGlobalStorageDirectories(globalSettings).catch((error) => {
+      console.error('初始化全局存储目录失败', error)
+      messageApi.error(`初始化全局存储目录失败：${String(error)}`)
+    })
+
+    return unsubscribe
+  }, [])
+
+  useEffect(() => {
+    let disposed = false
+    let unlisten: (() => void) | undefined
+
+    void listen<AddInstancePayload>(ADD_INSTANCE_CREATED_EVENT, (event) => {
+      const instance: ServerInstance = {
+        id: event.payload.id,
+        name: event.payload.name,
+        map: event.payload.map,
+        mapCode: event.payload.mapCode,
+        mode: event.payload.mode,
+        status: 'stopped',
+        gamePort: event.payload.gamePort,
+        queryPort: event.payload.queryPort,
+        players: 0,
+        maxPlayers: event.payload.maxPlayers,
+      }
+
+      setInstances((current) => current.some((item) => item.id === instance.id) ? current : [...current, instance])
+      setSelectedId(instance.id)
+      setSelectedRows([instance.id])
+      setLogs((current) => [...current, {
+        id: Date.now(),
+        time: nowTime(),
+        instance: instance.name,
+        level: 'success',
+        message: `已添加实例：${instance.map}，目录：${event.payload.installPath}`,
+      }])
+      messageApi.success(`${instance.name} 已添加`)
+    }).then((removeListener) => {
+      if (disposed) removeListener()
+      else unlisten = removeListener
+    }).catch((error) => {
+      console.error('监听添加实例事件失败', error)
+    })
+
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [messageApi])
 
   const openSettingsWindow = () => {
     const webview = new WebviewWindow('settings', {
@@ -213,6 +306,7 @@ export default function App() {
       </header>
 
       <main className="workspace">
+        <SteamCmdSetup settings={globalSettings} onSettingsChange={setGlobalSettings} />
         <section className="stats-grid">
           <StatCard icon={<CloudServerOutlined />} label="总服务器数" value={instances.length} suffix="个实例" />
           <StatCard icon={<CheckCircleOutlined />} label="运行中" value={`${running} / ${instances.length}`} suffix="个实例" tone="green" />
@@ -226,7 +320,7 @@ export default function App() {
               <div className="surface__title">
                 <span>服务器实例列表</span>
                 <Space size={8}>
-                  <Button size="small" icon={<PlusOutlined />} onClick={() => messageApi.info('添加实例向导将在下一步接入')}>添加实例</Button>
+                  <Button size="small" icon={<PlusOutlined />} onClick={() => void openAddInstanceWindow()}>添加实例</Button>
                   <Button size="small" icon={<AppstoreAddOutlined />}>批量操作</Button>
                   <Button size="small" icon={<ReloadOutlined />} onClick={() => messageApi.success('实例状态已刷新')}>刷新列表</Button>
                 </Space>

@@ -2,12 +2,15 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ConfigProvider, theme } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
+import AddInstanceWindow from './AddInstanceWindow'
 import App from './App'
 import SettingsWindow from './SettingsWindow'
 import './styles.css'
 
 const isSettingsWindow = new URLSearchParams(window.location.search).get('window') === 'settings'
+const isAddInstanceWindow = new URLSearchParams(window.location.search).get('window') === 'add-instance'
 document.documentElement.classList.toggle('settings-document', isSettingsWindow)
+document.documentElement.classList.toggle('child-window-document', isSettingsWindow || isAddInstanceWindow)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -42,7 +45,7 @@ createRoot(document.getElementById('root')!).render(
         },
       }}
     >
-      {isSettingsWindow ? <SettingsWindow /> : <App />}
+      {isSettingsWindow ? <SettingsWindow /> : isAddInstanceWindow ? <AddInstanceWindow /> : <App />}
     </ConfigProvider>
   </StrictMode>,
 )
