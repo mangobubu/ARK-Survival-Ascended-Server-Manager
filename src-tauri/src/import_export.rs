@@ -79,7 +79,8 @@ pub fn import_instances(runtime: &AppRuntime, path: &Path) -> Result<ImportResul
         return Err(format!("不支持的导入文件版本：{}", document.schema_version));
     }
 
-    let (imported_instances, skipped_instances) = runtime.replace_from_import(document.instances)?;
+    let (imported_instances, skipped_instances) =
+        runtime.replace_from_import(document.instances)?;
     Ok(ImportResult {
         imported_instances,
         skipped_instances,

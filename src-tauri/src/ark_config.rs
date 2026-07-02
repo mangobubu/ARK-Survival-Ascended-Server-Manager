@@ -33,9 +33,8 @@ pub fn apply_instance_config(
             game_user_settings_path.display()
         )
     })?;
-    fs::write(&game_ini_path, render_game_ini(config)).map_err(|error| {
-        format!("无法写入 Game.ini {}：{error}", game_ini_path.display())
-    })?;
+    fs::write(&game_ini_path, render_game_ini(config))
+        .map_err(|error| format!("无法写入 Game.ini {}：{error}", game_ini_path.display()))?;
 
     Ok(AppliedConfig {
         config_dir,
@@ -96,10 +95,16 @@ pub fn build_launch_arguments(
     );
 
     if !server_password.is_empty() {
-        map_url.push_str(&format!("?ServerPassword={}", url_component(&server_password)));
+        map_url.push_str(&format!(
+            "?ServerPassword={}",
+            url_component(&server_password)
+        ));
     }
     if !admin_password.is_empty() {
-        map_url.push_str(&format!("?ServerAdminPassword={}", url_component(&admin_password)));
+        map_url.push_str(&format!(
+            "?ServerAdminPassword={}",
+            url_component(&admin_password)
+        ));
     }
     if !spectator_password.is_empty() {
         map_url.push_str(&format!(
@@ -169,12 +174,7 @@ pub fn build_launch_arguments(
         "serverGameLogIncludeTribe",
         "-ServerRCONOutputTribeLogs",
     );
-    push_flag(
-        &mut args,
-        config,
-        "destroyWildDinos",
-        "-ForceRespawnDinos",
-    );
+    push_flag(&mut args, config, "destroyWildDinos", "-ForceRespawnDinos");
 
     let gb_restart = number_u32(config, "gbUsageToForceRestart", 0);
     if gb_restart > 0 {
@@ -225,48 +225,156 @@ fn render_game_user_settings(
     let active_mods = active_mod_ids(mods).join(",");
     let mut lines = vec![
         "[ServerSettings]".to_string(),
-        format!("SessionName={}", text(config, "sessionName", &instance.name)),
+        format!(
+            "SessionName={}",
+            text(config, "sessionName", &instance.name)
+        ),
         format!("ServerPassword={}", text(config, "serverPassword", "")),
         format!("ServerAdminPassword={}", text(config, "adminPassword", "")),
-        format!("SpectatorPassword={}", text(config, "spectatorPassword", "")),
-        format!("RCONEnabled={}", ini_bool(bool_value(config, "rconEnabled", true))),
-        format!("RCONPort={}", number_u16(config, "rconPort", instance.rcon_port)),
-        format!("Port={}", number_u16(config, "gamePort", instance.game_port)),
-        format!("QueryPort={}", number_u16(config, "queryPort", instance.query_port)),
-        format!("MaxPlayers={}", number_u32(config, "maxPlayers", instance.max_players)),
-        format!("ServerPVE={}", ini_bool(bool_value(config, "pve", instance.mode == "PvE"))),
-        format!("ServerHardcore={}", ini_bool(bool_value(config, "hardcore", false))),
-        format!("DisableFriendlyFire={}", ini_bool(bool_value(config, "disableFriendlyFire", false))),
-        format!("EnablePVPGamma={}", ini_bool(bool_value(config, "enablePvPGamma", true))),
-        format!("AllowHitMarkers={}", ini_bool(bool_value(config, "allowHitMarkers", true))),
-        format!("AllowThirdPersonPlayer={}", ini_bool(bool_value(config, "thirdPerson", true))),
-        format!("ServerCrosshair={}", ini_bool(bool_value(config, "crosshair", true))),
-        format!("ShowMapPlayerLocation={}", ini_bool(bool_value(config, "showMapPlayer", true))),
-        format!("AllowFlyerCarryPvE={}", ini_bool(bool_value(config, "flyerCarry", true))),
+        format!(
+            "SpectatorPassword={}",
+            text(config, "spectatorPassword", "")
+        ),
+        format!(
+            "RCONEnabled={}",
+            ini_bool(bool_value(config, "rconEnabled", true))
+        ),
+        format!(
+            "RCONPort={}",
+            number_u16(config, "rconPort", instance.rcon_port)
+        ),
+        format!(
+            "Port={}",
+            number_u16(config, "gamePort", instance.game_port)
+        ),
+        format!(
+            "QueryPort={}",
+            number_u16(config, "queryPort", instance.query_port)
+        ),
+        format!(
+            "MaxPlayers={}",
+            number_u32(config, "maxPlayers", instance.max_players)
+        ),
+        format!(
+            "ServerPVE={}",
+            ini_bool(bool_value(config, "pve", instance.mode == "PvE"))
+        ),
+        format!(
+            "ServerHardcore={}",
+            ini_bool(bool_value(config, "hardcore", false))
+        ),
+        format!(
+            "DisableFriendlyFire={}",
+            ini_bool(bool_value(config, "disableFriendlyFire", false))
+        ),
+        format!(
+            "EnablePVPGamma={}",
+            ini_bool(bool_value(config, "enablePvPGamma", true))
+        ),
+        format!(
+            "AllowHitMarkers={}",
+            ini_bool(bool_value(config, "allowHitMarkers", true))
+        ),
+        format!(
+            "AllowThirdPersonPlayer={}",
+            ini_bool(bool_value(config, "thirdPerson", true))
+        ),
+        format!(
+            "ServerCrosshair={}",
+            ini_bool(bool_value(config, "crosshair", true))
+        ),
+        format!(
+            "ShowMapPlayerLocation={}",
+            ini_bool(bool_value(config, "showMapPlayer", true))
+        ),
+        format!(
+            "AllowFlyerCarryPvE={}",
+            ini_bool(bool_value(config, "flyerCarry", true))
+        ),
         format!("XPMultiplier={}", number_f64(config, "xpMultiplier", 1.0)),
-        format!("TamingSpeedMultiplier={}", number_f64(config, "tamingSpeed", 1.0)),
-        format!("HarvestAmountMultiplier={}", number_f64(config, "harvestAmount", 1.0)),
-        format!("HarvestHealthMultiplier={}", number_f64(config, "harvestHealthMultiplier", 1.0)),
-        format!("PlayerDamageMultiplier={}", number_f64(config, "playerDamageMultiplier", 1.0)),
-        format!("PlayerResistanceMultiplier={}", number_f64(config, "playerResistanceMultiplier", 1.0)),
-        format!("DinoDamageMultiplier={}", number_f64(config, "dinoDamageMultiplier", 1.0)),
-        format!("DinoResistanceMultiplier={}", number_f64(config, "dinoResistanceMultiplier", 1.0)),
-        format!("TamedDinoDamageMultiplier={}", number_f64(config, "tamedDinoDamageMultiplier", 1.0)),
-        format!("TamedDinoResistanceMultiplier={}", number_f64(config, "tamedDinoResistanceMultiplier", 1.0)),
-        format!("PlayerCharacterFoodDrainMultiplier={}", number_f64(config, "playerFoodDrainMultiplier", 1.0)),
-        format!("PlayerCharacterWaterDrainMultiplier={}", number_f64(config, "playerWaterDrainMultiplier", 1.0)),
-        format!("PlayerCharacterStaminaDrainMultiplier={}", number_f64(config, "playerStaminaDrainMultiplier", 1.0)),
-        format!("DinoCharacterFoodDrainMultiplier={}", number_f64(config, "dinoFoodDrainMultiplier", 1.0)),
-        format!("DinoCharacterStaminaDrainMultiplier={}", number_f64(config, "dinoStaminaDrainMultiplier", 1.0)),
-        format!("DayCycleSpeedScale={}", number_f64(config, "dayCycleSpeed", 1.0)),
-        format!("DayTimeSpeedScale={}", number_f64(config, "dayTimeSpeed", 1.0)),
-        format!("NightTimeSpeedScale={}", number_f64(config, "nightTimeSpeed", 1.0)),
-        format!("ResourcesRespawnPeriodMultiplier={}", number_f64(config, "resourceRespawn", 1.0)),
-        format!("DinoCountMultiplier={}", number_f64(config, "dinoCount", 1.0)),
+        format!(
+            "TamingSpeedMultiplier={}",
+            number_f64(config, "tamingSpeed", 1.0)
+        ),
+        format!(
+            "HarvestAmountMultiplier={}",
+            number_f64(config, "harvestAmount", 1.0)
+        ),
+        format!(
+            "HarvestHealthMultiplier={}",
+            number_f64(config, "harvestHealthMultiplier", 1.0)
+        ),
+        format!(
+            "PlayerDamageMultiplier={}",
+            number_f64(config, "playerDamageMultiplier", 1.0)
+        ),
+        format!(
+            "PlayerResistanceMultiplier={}",
+            number_f64(config, "playerResistanceMultiplier", 1.0)
+        ),
+        format!(
+            "DinoDamageMultiplier={}",
+            number_f64(config, "dinoDamageMultiplier", 1.0)
+        ),
+        format!(
+            "DinoResistanceMultiplier={}",
+            number_f64(config, "dinoResistanceMultiplier", 1.0)
+        ),
+        format!(
+            "TamedDinoDamageMultiplier={}",
+            number_f64(config, "tamedDinoDamageMultiplier", 1.0)
+        ),
+        format!(
+            "TamedDinoResistanceMultiplier={}",
+            number_f64(config, "tamedDinoResistanceMultiplier", 1.0)
+        ),
+        format!(
+            "PlayerCharacterFoodDrainMultiplier={}",
+            number_f64(config, "playerFoodDrainMultiplier", 1.0)
+        ),
+        format!(
+            "PlayerCharacterWaterDrainMultiplier={}",
+            number_f64(config, "playerWaterDrainMultiplier", 1.0)
+        ),
+        format!(
+            "PlayerCharacterStaminaDrainMultiplier={}",
+            number_f64(config, "playerStaminaDrainMultiplier", 1.0)
+        ),
+        format!(
+            "DinoCharacterFoodDrainMultiplier={}",
+            number_f64(config, "dinoFoodDrainMultiplier", 1.0)
+        ),
+        format!(
+            "DinoCharacterStaminaDrainMultiplier={}",
+            number_f64(config, "dinoStaminaDrainMultiplier", 1.0)
+        ),
+        format!(
+            "DayCycleSpeedScale={}",
+            number_f64(config, "dayCycleSpeed", 1.0)
+        ),
+        format!(
+            "DayTimeSpeedScale={}",
+            number_f64(config, "dayTimeSpeed", 1.0)
+        ),
+        format!(
+            "NightTimeSpeedScale={}",
+            number_f64(config, "nightTimeSpeed", 1.0)
+        ),
+        format!(
+            "ResourcesRespawnPeriodMultiplier={}",
+            number_f64(config, "resourceRespawn", 1.0)
+        ),
+        format!(
+            "DinoCountMultiplier={}",
+            number_f64(config, "dinoCount", 1.0)
+        ),
         format!("ActiveMods={active_mods}"),
         String::new(),
         "[SessionSettings]".to_string(),
-        format!("SessionName={}", text(config, "sessionName", &instance.name)),
+        format!(
+            "SessionName={}",
+            text(config, "sessionName", &instance.name)
+        ),
     ];
 
     if bool_value(config, "adminLogging", true) {
@@ -282,32 +390,95 @@ fn render_game_user_settings(
 fn render_game_ini(config: &Value) -> String {
     let mut lines = vec![
         "[/Script/ShooterGame.ShooterGameMode]".to_string(),
-        format!("OverrideOfficialDifficulty={}", number_f64(config, "difficulty", 5.0)),
-        format!("MatingIntervalMultiplier={}", number_f64(config, "matingInterval", 1.0)),
-        format!("MatingSpeedMultiplier={}", number_f64(config, "matingSpeedMultiplier", 1.0)),
-        format!("EggHatchSpeedMultiplier={}", number_f64(config, "eggHatchSpeed", 1.0)),
-        format!("BabyMatureSpeedMultiplier={}", number_f64(config, "babyMatureSpeed", 1.0)),
-        format!("BabyCuddleIntervalMultiplier={}", number_f64(config, "cuddleInterval", 1.0)),
-        format!("BabyFoodConsumptionSpeedMultiplier={}", number_f64(config, "babyFoodConsumption", 1.0)),
-        format!("LayEggIntervalMultiplier={}", number_f64(config, "layEggIntervalMultiplier", 1.0)),
-        format!("BabyCuddleGracePeriodMultiplier={}", number_f64(config, "babyCuddleGracePeriodMultiplier", 1.0)),
-        format!("BabyCuddleLoseImprintQualitySpeedMultiplier={}", number_f64(config, "babyCuddleLoseImprintQualitySpeedMultiplier", 1.0)),
-        format!("BabyImprintingStatScaleMultiplier={}", number_f64(config, "babyImprintingStatScaleMultiplier", 1.0)),
-        format!("BabyImprintAmountMultiplier={}", number_f64(config, "babyImprintAmountMultiplier", 1.0)),
-        format!("bAllowAnyoneBabyImprintCuddle={}", ini_bool(bool_value(config, "allowAnyoneBabyImprintCuddle", false))),
-        format!("PerPlatformMaxStructuresMultiplier={}", number_f64(config, "platformStructureMultiplier", 1.0)),
-        format!("TheMaxStructuresInRange={}", number_u32(config, "structureLimit", 10_500)),
-        format!("bDisableStructurePlacementCollision={}", ini_bool(bool_value(config, "disablePlacementCollision", false))),
-        format!("MaxNumberOfPlayersInTribe={}", number_u32(config, "maxTribeSize", 0)),
-        format!("bPvEAllowTribeWar={}", ini_bool(bool_value(config, "tribeAlliances", true))),
+        format!(
+            "OverrideOfficialDifficulty={}",
+            number_f64(config, "difficulty", 5.0)
+        ),
+        format!(
+            "MatingIntervalMultiplier={}",
+            number_f64(config, "matingInterval", 1.0)
+        ),
+        format!(
+            "MatingSpeedMultiplier={}",
+            number_f64(config, "matingSpeedMultiplier", 1.0)
+        ),
+        format!(
+            "EggHatchSpeedMultiplier={}",
+            number_f64(config, "eggHatchSpeed", 1.0)
+        ),
+        format!(
+            "BabyMatureSpeedMultiplier={}",
+            number_f64(config, "babyMatureSpeed", 1.0)
+        ),
+        format!(
+            "BabyCuddleIntervalMultiplier={}",
+            number_f64(config, "cuddleInterval", 1.0)
+        ),
+        format!(
+            "BabyFoodConsumptionSpeedMultiplier={}",
+            number_f64(config, "babyFoodConsumption", 1.0)
+        ),
+        format!(
+            "LayEggIntervalMultiplier={}",
+            number_f64(config, "layEggIntervalMultiplier", 1.0)
+        ),
+        format!(
+            "BabyCuddleGracePeriodMultiplier={}",
+            number_f64(config, "babyCuddleGracePeriodMultiplier", 1.0)
+        ),
+        format!(
+            "BabyCuddleLoseImprintQualitySpeedMultiplier={}",
+            number_f64(config, "babyCuddleLoseImprintQualitySpeedMultiplier", 1.0)
+        ),
+        format!(
+            "BabyImprintingStatScaleMultiplier={}",
+            number_f64(config, "babyImprintingStatScaleMultiplier", 1.0)
+        ),
+        format!(
+            "BabyImprintAmountMultiplier={}",
+            number_f64(config, "babyImprintAmountMultiplier", 1.0)
+        ),
+        format!(
+            "bAllowAnyoneBabyImprintCuddle={}",
+            ini_bool(bool_value(config, "allowAnyoneBabyImprintCuddle", false))
+        ),
+        format!(
+            "PerPlatformMaxStructuresMultiplier={}",
+            number_f64(config, "platformStructureMultiplier", 1.0)
+        ),
+        format!(
+            "TheMaxStructuresInRange={}",
+            number_u32(config, "structureLimit", 10_500)
+        ),
+        format!(
+            "bDisableStructurePlacementCollision={}",
+            ini_bool(bool_value(config, "disablePlacementCollision", false))
+        ),
+        format!(
+            "MaxNumberOfPlayersInTribe={}",
+            number_u32(config, "maxTribeSize", 0)
+        ),
+        format!(
+            "bPvEAllowTribeWar={}",
+            ini_bool(bool_value(config, "tribeAlliances", true))
+        ),
         format!("bDisableDinoBreeding={}", ini_bool(false)),
     ];
 
     let lost_colony_settings = [
         ("LimitBunkersPerTribe", "limitBunkersPerTribe"),
-        ("AllowBunkersInPreventionZones", "allowBunkersInPreventionZones"),
-        ("AllowRidingDinosInsideBunkers", "allowRidingDinosInsideBunkers"),
-        ("AllowBunkerModulesAboveGround", "allowBunkerModulesAboveGround"),
+        (
+            "AllowBunkersInPreventionZones",
+            "allowBunkersInPreventionZones",
+        ),
+        (
+            "AllowRidingDinosInsideBunkers",
+            "allowRidingDinosInsideBunkers",
+        ),
+        (
+            "AllowBunkerModulesAboveGround",
+            "allowBunkerModulesAboveGround",
+        ),
         ("AllowDinoAIInsideBunkers", "allowDinoAIInsideBunkers"),
         (
             "AllowBunkerModulesInPreventionZones",

@@ -73,6 +73,16 @@ export interface AddInstancePayload {
   description: string
 }
 
+export type InstancePortKind = 'gamePort' | 'queryPort' | 'rconPort'
+
+export interface PortCheckResult {
+  port: number
+  available: boolean
+  exists: boolean
+  suggestedPort: number | null
+  reason: string | null
+}
+
 export interface InstanceCreatedEvent {
   instance: ServerInstance
   autoInstall: boolean
@@ -102,6 +112,9 @@ export interface JobProgress {
   percent: number | null
   message: string
   detail: string | null
+  downloadedBytes: number
+  totalBytes: number | null
+  bytesPerSecond: number
 }
 
 export interface BackupItem {

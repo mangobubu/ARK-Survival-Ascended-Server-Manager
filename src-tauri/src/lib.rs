@@ -33,6 +33,7 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::list_instances,
+            commands::check_instance_port,
             commands::create_instance,
             commands::get_instance_config,
             commands::get_instance_mods,

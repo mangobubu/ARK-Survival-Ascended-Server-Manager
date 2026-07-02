@@ -1,13 +1,18 @@
 use crate::models::{
-    AddInstancePayload, GlobalSettings, LogLine, ModItem, ServerInstance, ServerStatus,
+    AddInstancePayload, GlobalSettings, LogLine, ModItem, PortCheckResult, ServerInstance,
+    ServerStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::{
     collections::HashMap,
     fs,
+    net::{TcpListener, UdpSocket},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager};
@@ -21,6 +26,7 @@ pub struct AppRuntime {
     data_dir: Arc<PathBuf>,
     data: Arc<Mutex<ManagerData>>,
     processes: Arc<Mutex<HashMap<String, Child>>>,
+    update_cancels: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -59,6 +65,7 @@ impl AppRuntime {
             data_dir: Arc::new(data_dir),
             data: Arc::new(Mutex::new(data)),
             processes: Arc::new(Mutex::new(HashMap::new())),
+            update_cancels: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -79,6 +86,50 @@ impl AppRuntime {
         Ok(self.lock()?.instances.clone())
     }
 
+    pub fn check_instance_port(
+        &self,
+        port: u16,
+        port_kind: &str,
+    ) -> Result<PortCheckResult, String> {
+        validate_port_kind(port_kind)?;
+        if port < 1024 {
+            return Ok(PortCheckResult {
+                port,
+                available: false,
+                exists: false,
+                suggested_port: None,
+                reason: Some("端口必须在 1024-65535 范围内".to_string()),
+            });
+        }
+
+        let data = self.lock()?;
+        let exists = instance_uses_port(&data.instances, port);
+        let suggested_port = if exists {
+            suggest_next_instance_port(&data.instances, port_kind)?
+        } else {
+            None
+        };
+
+        if exists {
+            return Ok(PortCheckResult {
+                port,
+                available: false,
+                exists,
+                suggested_port,
+                reason: Some(format!("端口 {port} 已被其他实例占用")),
+            });
+        }
+
+        let reason = system_port_unavailable_reason(port);
+        Ok(PortCheckResult {
+            port,
+            available: reason.is_none(),
+            exists,
+            suggested_port,
+            reason,
+        })
+    }
+
     pub fn get_instance(&self, instance_id: &str) -> Result<ServerInstance, String> {
         self.lock()?
             .instances
@@ -91,7 +142,11 @@ impl AppRuntime {
     pub fn upsert_instance(&self, instance: ServerInstance) -> Result<ServerInstance, String> {
         {
             let mut data = self.lock()?;
-            if let Some(current) = data.instances.iter_mut().find(|item| item.id == instance.id) {
+            if let Some(current) = data
+                .instances
+                .iter_mut()
+                .find(|item| item.id == instance.id)
+            {
                 *current = instance.clone();
             } else {
                 data.instances.push(instance.clone());
@@ -206,10 +261,8 @@ impl AppRuntime {
 
         {
             let mut data = self.lock()?;
-            data.configs.insert(
-                id.clone(),
-                default_config_from_payload(&payload, &instance),
-            );
+            data.configs
+                .insert(id.clone(), default_config_from_payload(&payload, &instance));
             data.mods.insert(id.clone(), Vec::new());
             data.instances.push(instance.clone());
         }
@@ -282,27 +335,74 @@ impl AppRuntime {
         self.persist()
     }
 
-    pub fn lock_processes(&self) -> Result<std::sync::MutexGuard<'_, HashMap<String, Child>>, String> {
+    pub fn lock_processes(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, HashMap<String, Child>>, String> {
         self.processes
             .lock()
             .map_err(|_| "运行进程状态锁已损坏".to_string())
+    }
+
+    pub fn begin_update(&self, instance_id: &str) -> Result<Arc<AtomicBool>, String> {
+        let mut update_cancels = self.lock_update_cancels()?;
+        if update_cancels.contains_key(instance_id) {
+            return Err("该实例已有安装/更新任务正在运行".to_string());
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        update_cancels.insert(instance_id.to_string(), Arc::clone(&cancel));
+        Ok(cancel)
+    }
+
+    pub fn finish_update(&self, instance_id: &str) {
+        if let Ok(mut update_cancels) = self.lock_update_cancels() {
+            update_cancels.remove(instance_id);
+        }
+    }
+
+    pub fn cancel_update(&self, instance_id: &str) -> Result<bool, String> {
+        let update_cancels = self.lock_update_cancels()?;
+        let Some(cancel) = update_cancels.get(instance_id) else {
+            return Ok(false);
+        };
+        cancel.store(true, Ordering::SeqCst);
+        Ok(true)
+    }
+
+    pub fn is_update_running(&self, instance_id: &str) -> Result<bool, String> {
+        Ok(self.lock_update_cancels()?.contains_key(instance_id))
+    }
+
+    fn lock_update_cancels(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, HashMap<String, Arc<AtomicBool>>>, String> {
+        self.update_cancels
+            .lock()
+            .map_err(|_| "更新任务状态锁已损坏".to_string())
     }
 
     pub fn snapshot(&self) -> Result<ManagerData, String> {
         Ok(self.lock()?.clone())
     }
 
-    pub fn replace_from_import(&self, bundles: Vec<crate::models::InstanceConfigBundle>) -> Result<(usize, usize), String> {
+    pub fn replace_from_import(
+        &self,
+        bundles: Vec<crate::models::InstanceConfigBundle>,
+    ) -> Result<(usize, usize), String> {
         let mut imported = 0;
         let mut skipped = 0;
         {
             let mut data = self.lock()?;
             for bundle in bundles {
-                if data.instances.iter().any(|item| item.id == bundle.instance.id) {
+                if data
+                    .instances
+                    .iter()
+                    .any(|item| item.id == bundle.instance.id)
+                {
                     skipped += 1;
                     continue;
                 }
-                data.configs.insert(bundle.instance.id.clone(), bundle.config);
+                data.configs
+                    .insert(bundle.instance.id.clone(), bundle.config);
                 data.mods.insert(bundle.instance.id.clone(), bundle.mods);
                 data.instances.push(bundle.instance);
                 imported += 1;
@@ -362,6 +462,18 @@ fn validate_instance_payload(payload: &AddInstancePayload) -> Result<(), String>
     if payload.admin_password.trim().is_empty() {
         return Err("管理员密码不能为空".to_string());
     }
+    if [payload.game_port, payload.query_port, payload.rcon_port]
+        .iter()
+        .any(|port| *port < 1024)
+    {
+        return Err("端口必须在 1024-65535 范围内".to_string());
+    }
+    if payload.game_port == payload.query_port
+        || payload.game_port == payload.rcon_port
+        || payload.query_port == payload.rcon_port
+    {
+        return Err("游戏端口、查询端口和 RCON 端口不能重复".to_string());
+    }
     Ok(())
 }
 
@@ -370,12 +482,69 @@ fn ensure_port_available(
     port: u16,
     label: &str,
 ) -> Result<(), String> {
-    if instances.iter().any(|item| {
-        item.game_port == port || item.query_port == port || item.rcon_port == port
-    }) {
+    if instance_uses_port(instances, port) {
         return Err(format!("{label} {port} 已被其他实例占用"));
     }
+    if let Some(reason) = system_port_unavailable_reason(port) {
+        return Err(format!("{label} {port} 不可用：{reason}"));
+    }
     Ok(())
+}
+
+fn instance_uses_port(instances: &[ServerInstance], port: u16) -> bool {
+    instances
+        .iter()
+        .any(|item| item.game_port == port || item.query_port == port || item.rcon_port == port)
+}
+
+fn validate_port_kind(port_kind: &str) -> Result<(), String> {
+    match port_kind {
+        "gamePort" | "queryPort" | "rconPort" => Ok(()),
+        _ => Err(format!("未知端口类型：{port_kind}")),
+    }
+}
+
+fn port_for_kind(instance: &ServerInstance, port_kind: &str) -> Result<u16, String> {
+    match port_kind {
+        "gamePort" => Ok(instance.game_port),
+        "queryPort" => Ok(instance.query_port),
+        "rconPort" => Ok(instance.rcon_port),
+        _ => Err(format!("未知端口类型：{port_kind}")),
+    }
+}
+
+fn suggest_next_instance_port(
+    instances: &[ServerInstance],
+    port_kind: &str,
+) -> Result<Option<u16>, String> {
+    let Some(last_instance) = instances.last() else {
+        return Ok(None);
+    };
+    let mut candidate = u32::from(port_for_kind(last_instance, port_kind)?) + 10;
+    while candidate <= u32::from(u16::MAX) {
+        let port = candidate as u16;
+        if !instance_uses_port(instances, port) {
+            return Ok(Some(port));
+        }
+        candidate += 10;
+    }
+    Ok(None)
+}
+
+fn system_port_unavailable_reason(port: u16) -> Option<String> {
+    let tcp_listener = match TcpListener::bind(("0.0.0.0", port)) {
+        Ok(listener) => listener,
+        Err(error) => return Some(format!("TCP 绑定失败：{error}")),
+    };
+    drop(tcp_listener);
+
+    let udp_socket = match UdpSocket::bind(("0.0.0.0", port)) {
+        Ok(socket) => socket,
+        Err(error) => return Some(format!("UDP 绑定失败：{error}")),
+    };
+    drop(udp_socket);
+
+    None
 }
 
 fn normalize_path_text(path: &str) -> PathBuf {
@@ -408,7 +577,10 @@ fn default_config_from_payload(payload: &AddInstancePayload, instance: &ServerIn
     map.insert("useAllCores".to_string(), json!(true));
     map.insert("noBattlEye".to_string(), json!(true));
     map.insert("serverPlatform".to_string(), json!("ALL"));
-    map.insert("clusterDirOverride".to_string(), json!("ShooterGame/Saved/clusters"));
+    map.insert(
+        "clusterDirOverride".to_string(),
+        json!("ShooterGame/Saved/clusters"),
+    );
     map.insert("customLaunchArgs".to_string(), json!("-culture=zh"));
     Value::Object(map)
 }

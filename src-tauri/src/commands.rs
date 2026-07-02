@@ -1,28 +1,109 @@
 use crate::{
     app_state::{AppRuntime, now_millis},
-    ark_config,
-    backup,
-    import_export,
+    ark_config, backup, import_export,
     models::{
-        AddInstancePayload, ASA_DEDICATED_SERVER_APP_ID, BackupItem, ExportResult, GlobalSettings,
-        ImportResult, JobProgress, LogLine, ModItem, ServerInstance, ServerStatus,
+        ASA_DEDICATED_SERVER_APP_ID, AddInstancePayload, BackupItem, ExportResult, GlobalSettings,
+        ImportResult, JobProgress, LogLine, ModItem, PortCheckResult, ServerInstance, ServerStatus,
     },
     rcon,
 };
 use serde_json::Value;
 use std::{
+    collections::VecDeque,
     path::{Path, PathBuf},
     process::Stdio,
-    time::Duration,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, State, ipc::Channel};
 use tokio::{
-    io::{AsyncBufReadExt, BufReader},
+    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader},
     process::Command,
-    time::timeout,
+    task::JoinHandle,
+    time::{MissedTickBehavior, interval, timeout},
+};
+
+#[cfg(windows)]
+use windows_sys::core::BOOL;
+
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, HWND, LPARAM},
+    System::Console::{AttachConsole, FreeConsole, GetConsoleWindow},
+    System::Threading::{
+        GetProcessIoCounters, IO_COUNTERS, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    },
+    UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+        IsWindowVisible, SW_HIDE, ShowWindow,
+    },
 };
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const UPDATE_CANCELLED_MESSAGE: &str = "服务端安装/更新已取消";
+
+#[derive(Clone)]
+struct SteamCmdProgressSink {
+    app: AppHandle,
+    channel: Channel<JobProgress>,
+    instance_id: String,
+    tracker: Arc<Mutex<SteamCmdProgressTracker>>,
+}
+
+#[derive(Default)]
+struct SteamCmdProgressTracker {
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+    bytes_per_second: u64,
+    percent: Option<f64>,
+    last_sample: Option<(Instant, u64)>,
+    last_emit_at: Option<Instant>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct TransferSnapshot {
+    percent: Option<f64>,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+    bytes_per_second: u64,
+}
+
+struct ParsedSteamCmdProgress {
+    phase: String,
+    message: String,
+    percent: Option<f64>,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+}
+
+struct ManifestProgress {
+    phase: String,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ProcessTransferCounters {
+    read: u64,
+    write: u64,
+    other: u64,
+}
+
+impl ProcessTransferCounters {
+    fn estimated_download_delta_since(self, baseline: Self) -> u64 {
+        [
+            self.read.saturating_sub(baseline.read),
+            self.write.saturating_sub(baseline.write),
+            self.other.saturating_sub(baseline.other),
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or(0)
+    }
+}
 
 #[tauri::command]
 pub fn get_settings(runtime: State<'_, AppRuntime>) -> Result<GlobalSettings, String> {
@@ -41,6 +122,15 @@ pub fn save_settings(
 #[tauri::command]
 pub fn list_instances(runtime: State<'_, AppRuntime>) -> Result<Vec<ServerInstance>, String> {
     runtime.list_instances()
+}
+
+#[tauri::command]
+pub fn check_instance_port(
+    runtime: State<'_, AppRuntime>,
+    port: u16,
+    port_kind: String,
+) -> Result<PortCheckResult, String> {
+    runtime.check_instance_port(port, &port_kind)
 }
 
 #[tauri::command]
@@ -147,30 +237,59 @@ pub async fn install_or_update_instance(
     let settings = runtime.settings()?;
     let steamcmd = Path::new(&settings.steam_cmd_path).join("steamcmd.exe");
     if !steamcmd.is_file() {
-        return Err(format!("SteamCMD 不存在：{}", steamcmd.display()));
+        let error = format!("SteamCMD 不存在：{}", steamcmd.display());
+        let _ =
+            runtime.update_instance_status(&instance.id, ServerStatus::Error, Some(error.clone()));
+        let _ = emit_instance_log(&app, &runtime, &instance.name, "error", &error);
+        let _ = emit_status(&app, &runtime, &instance.id);
+        return Err(error);
     }
-    std::fs::create_dir_all(&instance.install_path)
-        .map_err(|error| format!("无法创建实例目录 {}：{error}", instance.install_path))?;
+    if let Err(error) = std::fs::create_dir_all(&instance.install_path) {
+        let error = format!("无法创建实例目录 {}：{error}", instance.install_path);
+        let _ =
+            runtime.update_instance_status(&instance.id, ServerStatus::Error, Some(error.clone()));
+        let _ = emit_instance_log(&app, &runtime, &instance.name, "error", &error);
+        let _ = emit_status(&app, &runtime, &instance.id);
+        return Err(error);
+    }
+    let update_cancel = runtime.begin_update(&instance.id)?;
 
     emit_progress(
         &progress,
         &instance.id,
         "preparing",
-        Some(5),
+        Some(5.0),
         "正在准备服务端安装/更新",
         None,
     )?;
     runtime.update_instance_status(&instance.id, ServerStatus::Updating, None)?;
     emit_status(&app, &runtime, &instance.id)?;
+    emit_instance_log(
+        &app,
+        &runtime,
+        &instance.name,
+        "info",
+        "开始安装/更新服务端文件",
+    )?;
 
-    let output = run_steamcmd_update(&steamcmd, Path::new(&instance.install_path), &progress, &instance).await;
+    let output = run_steamcmd_update(
+        &app,
+        &runtime,
+        &steamcmd,
+        Path::new(&instance.install_path),
+        &progress,
+        &instance,
+        update_cancel,
+    )
+    .await;
+    runtime.finish_update(&instance.id);
     match output {
         Ok(detail) => {
             emit_progress(
                 &progress,
                 &instance.id,
                 "completed",
-                Some(100),
+                Some(100.0),
                 "服务端安装/更新完成",
                 Some(detail),
             )?;
@@ -178,17 +297,34 @@ pub async fn install_or_update_instance(
             instance.status = ServerStatus::Stopped;
             instance.last_error = None;
             let updated = runtime.upsert_instance(instance.clone())?;
-            runtime.add_log(&updated.name, "success", "服务端安装/更新完成")?;
+            emit_instance_log(
+                &app,
+                &runtime,
+                &updated.name,
+                "success",
+                "服务端安装/更新完成",
+            )?;
             emit_status(&app, &runtime, &updated.id)?;
             Ok(updated)
         }
         Err(error) => {
+            let cancelled = error == UPDATE_CANCELLED_MESSAGE;
             runtime.update_instance_status(
                 &instance.id,
-                ServerStatus::Error,
-                Some(error.clone()),
+                if cancelled {
+                    ServerStatus::Stopped
+                } else {
+                    ServerStatus::Error
+                },
+                if cancelled { None } else { Some(error.clone()) },
             )?;
-            runtime.add_log(&instance.name, "error", &format!("服务端安装/更新失败：{error}"))?;
+            let log_level = if cancelled { "warn" } else { "error" };
+            let log_message = if cancelled {
+                UPDATE_CANCELLED_MESSAGE.to_string()
+            } else {
+                format!("服务端安装/更新失败：{error}")
+            };
+            emit_instance_log(&app, &runtime, &instance.name, log_level, &log_message)?;
             emit_status(&app, &runtime, &instance.id)?;
             Err(error)
         }
@@ -255,8 +391,13 @@ pub fn create_backup(
 ) -> Result<BackupItem, String> {
     let settings = runtime.settings()?;
     let instance = runtime.get_instance(&instance_id)?;
-    let backup = backup::create_instance_backup(Path::new(&settings.backup_storage_path), &instance)?;
-    runtime.add_log(&instance.name, "success", &format!("备份已创建：{}", backup.path))?;
+    let backup =
+        backup::create_instance_backup(Path::new(&settings.backup_storage_path), &instance)?;
+    runtime.add_log(
+        &instance.name,
+        "success",
+        &format!("备份已创建：{}", backup.path),
+    )?;
     Ok(backup)
 }
 
@@ -278,7 +419,11 @@ pub fn restore_backup(
 ) -> Result<(), String> {
     let instance = runtime.get_instance(&instance_id)?;
     backup::restore_instance_backup(&instance, Path::new(&backup_path))?;
-    runtime.add_log(&instance.name, "warn", &format!("已恢复备份：{backup_path}"))?;
+    runtime.add_log(
+        &instance.name,
+        "warn",
+        &format!("已恢复备份：{backup_path}"),
+    )?;
     Ok(())
 }
 
@@ -340,18 +485,33 @@ fn save_config_for_runtime(
 }
 
 async fn run_steamcmd_update(
+    app: &AppHandle,
+    runtime: &AppRuntime,
     steamcmd: &Path,
     install_path: &Path,
     progress: &Channel<JobProgress>,
     instance: &ServerInstance,
+    cancel: Arc<AtomicBool>,
 ) -> Result<String, String> {
     emit_progress(
         progress,
         &instance.id,
         "running",
-        Some(30),
+        None,
         "正在调用 SteamCMD 安装/更新 ASA Dedicated Server",
         None,
+    )?;
+    emit_instance_log(
+        app,
+        runtime,
+        &instance.name,
+        "info",
+        &format!(
+            "SteamCMD 命令：{} +force_install_dir {} +login anonymous +app_update {} validate +quit",
+            steamcmd.display(),
+            install_path.display(),
+            ASA_DEDICATED_SERVER_APP_ID
+        ),
     )?;
 
     let mut command = Command::new(steamcmd);
@@ -377,28 +537,113 @@ async fn run_steamcmd_update(
 
     #[cfg(windows)]
     {
-        let output = timeout(Duration::from_secs(60 * 60), command.output())
-            .await
-            .map_err(|_| "SteamCMD 安装/更新超时（60 分钟）".to_string())?
+        let mut child = command
+            .spawn()
             .map_err(|error| format!("无法启动 SteamCMD：{error}"))?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let combined = format!("{stdout}\n{stderr}");
-        if !output.status.success() {
-            return Err(trim_detail(&combined, "SteamCMD 安装/更新失败"));
+        let output_tail = Arc::new(Mutex::new(VecDeque::with_capacity(24)));
+        let progress_sink = SteamCmdProgressSink {
+            app: app.clone(),
+            channel: progress.clone(),
+            instance_id: instance.id.clone(),
+            tracker: Arc::new(Mutex::new(SteamCmdProgressTracker::default())),
+        };
+        let child_pid = child.id();
+        let manifest_monitor_stop = Arc::new(AtomicBool::new(false));
+        let manifest_monitor = spawn_manifest_progress_monitor(
+            install_path,
+            child_pid,
+            progress_sink.clone(),
+            Arc::clone(&manifest_monitor_stop),
+        );
+        let readers = vec![
+            spawn_command_log_reader(
+                app,
+                runtime,
+                &instance.name,
+                child.stdout.take(),
+                "info",
+                Arc::clone(&output_tail),
+                Some(progress_sink.clone()),
+            ),
+            spawn_command_log_reader(
+                app,
+                runtime,
+                &instance.name,
+                child.stderr.take(),
+                "error",
+                Arc::clone(&output_tail),
+                Some(progress_sink.clone()),
+            ),
+        ];
+
+        let started_at = Instant::now();
+        let status = loop {
+            if cancel.load(Ordering::SeqCst) {
+                emit_instance_log(
+                    app,
+                    runtime,
+                    &instance.name,
+                    "warn",
+                    "已取消安装/更新，正在结束 SteamCMD 进程树",
+                )?;
+                if let Some(pid) = child_pid {
+                    kill_process_tree(pid).await;
+                }
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                manifest_monitor_stop.store(true, Ordering::SeqCst);
+                manifest_monitor.abort();
+                wait_for_log_readers(readers).await;
+                return Err(UPDATE_CANCELLED_MESSAGE.to_string());
+            }
+
+            match timeout(Duration::from_millis(500), child.wait()).await {
+                Ok(Ok(status)) => break status,
+                Ok(Err(error)) => {
+                    manifest_monitor_stop.store(true, Ordering::SeqCst);
+                    manifest_monitor.abort();
+                    wait_for_log_readers(readers).await;
+                    return Err(format!("等待 SteamCMD 结束失败：{error}"));
+                }
+                Err(_) if started_at.elapsed() >= Duration::from_secs(60 * 60) => {
+                    if let Some(pid) = child_pid {
+                        kill_process_tree(pid).await;
+                    }
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    manifest_monitor_stop.store(true, Ordering::SeqCst);
+                    manifest_monitor.abort();
+                    wait_for_log_readers(readers).await;
+                    return Err("SteamCMD 安装/更新超时（60 分钟）".to_string());
+                }
+                Err(_) => {}
+            }
+        };
+        manifest_monitor_stop.store(true, Ordering::SeqCst);
+        manifest_monitor.abort();
+        wait_for_log_readers(readers).await;
+
+        if !status.success() {
+            let fallback = format!("SteamCMD 安装/更新失败，退出代码：{status}");
+            return Err(tail_detail(&output_tail, &fallback));
         }
-        emit_progress(
+        let transfer = transfer_snapshot(&progress_sink);
+        emit_progress_with_transfer(
             progress,
             &instance.id,
             "verifying",
-            Some(88),
+            transfer.percent,
             "正在验证服务端文件",
             None,
+            transfer,
         )?;
         if ark_config::server_executable(instance).is_none() {
-            return Err("SteamCMD 执行完成，但未找到 ASA 服务端可执行文件".to_string());
+            return Err(tail_detail(
+                &output_tail,
+                "SteamCMD 执行完成，但未找到 ASA 服务端可执行文件",
+            ));
         }
-        Ok(trim_detail(&combined, "SteamCMD 安装/更新完成"))
+        Ok(tail_detail(&output_tail, "SteamCMD 安装/更新完成"))
     }
 }
 
@@ -427,7 +672,11 @@ async fn start_instance_inner(
 
     let mut command = Command::new(&executable);
     command
-        .current_dir(executable.parent().unwrap_or_else(|| Path::new(&instance.install_path)))
+        .current_dir(
+            executable
+                .parent()
+                .unwrap_or_else(|| Path::new(&instance.install_path)),
+        )
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -441,6 +690,10 @@ async fn start_instance_inner(
         .spawn()
         .map_err(|error| format!("启动 ASA 服务端失败：{error}"))?;
     let pid = child.id();
+    #[cfg(windows)]
+    if let Some(pid) = pid {
+        spawn_process_window_hider(pid);
+    }
     attach_process_log_reader(&app, &runtime, &instance, child.stdout.take(), "info");
     attach_process_log_reader(&app, &runtime, &instance, child.stderr.take(), "error");
 
@@ -468,6 +721,27 @@ async fn stop_instance_inner(
     let config = runtime.get_config(&instance_id)?;
     if instance.status == ServerStatus::Stopped {
         return Ok(instance);
+    }
+    if instance.status == ServerStatus::Updating {
+        if runtime.cancel_update(&instance_id)? {
+            emit_instance_log(
+                &app,
+                &runtime,
+                &instance.name,
+                "warn",
+                "正在取消安装/更新任务",
+            )?;
+            for _ in 0..20 {
+                if !runtime.is_update_running(&instance_id)? {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        }
+
+        let updated = runtime.set_instance_pid(&instance_id, None, ServerStatus::Stopped)?;
+        emit_status(&app, &runtime, &instance_id)?;
+        return Ok(updated);
     }
 
     if bool_from_config(&config, "saveOnStop", true) {
@@ -502,6 +776,9 @@ async fn stop_instance_inner(
     };
     if let Some(child) = child.as_mut() {
         if child.try_wait().ok().flatten().is_none() {
+            if let Some(pid) = child.id() {
+                kill_process_tree(pid).await;
+            }
             let _ = child.kill().await;
         }
     }
@@ -577,23 +854,56 @@ fn attach_process_log_reader(
     });
 }
 
-fn emit_status(
-    app: &AppHandle,
-    runtime: &AppRuntime,
-    instance_id: &str,
-) -> Result<(), String> {
+fn emit_status(app: &AppHandle, runtime: &AppRuntime, instance_id: &str) -> Result<(), String> {
     let instance = runtime.get_instance(instance_id)?;
     app.emit("asa:instance-status", instance)
         .map_err(|error| format!("发送实例状态事件失败：{error}"))
+}
+
+fn emit_instance_log(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance_name: &str,
+    level: &str,
+    message: &str,
+) -> Result<(), String> {
+    let line = runtime.add_log(instance_name, level, message)?;
+    app.emit("asa:log-line", line)
+        .map_err(|error| format!("发送日志事件失败：{error}"))
 }
 
 fn emit_progress(
     channel: &Channel<JobProgress>,
     instance_id: &str,
     phase: &str,
-    percent: Option<u8>,
+    percent: Option<f64>,
     message: &str,
     detail: Option<String>,
+) -> Result<(), String> {
+    emit_progress_with_transfer(
+        channel,
+        instance_id,
+        phase,
+        percent,
+        message,
+        detail,
+        TransferSnapshot {
+            percent,
+            downloaded_bytes: 0,
+            total_bytes: None,
+            bytes_per_second: 0,
+        },
+    )
+}
+
+fn emit_progress_with_transfer(
+    channel: &Channel<JobProgress>,
+    instance_id: &str,
+    phase: &str,
+    percent: Option<f64>,
+    message: &str,
+    detail: Option<String>,
+    transfer: TransferSnapshot,
 ) -> Result<(), String> {
     channel
         .send(JobProgress {
@@ -603,6 +913,9 @@ fn emit_progress(
             percent,
             message: message.to_string(),
             detail,
+            downloaded_bytes: transfer.downloaded_bytes,
+            total_bytes: transfer.total_bytes,
+            bytes_per_second: transfer.bytes_per_second,
         })
         .map_err(|error| format!("发送任务进度失败：{error}"))
 }
@@ -656,6 +969,685 @@ fn trim_detail(content: &str, fallback: &str) -> String {
         text.truncate(500);
     }
     text
+}
+
+fn remember_tail(tail: &Arc<Mutex<VecDeque<String>>>, line: &str) {
+    if let Ok(mut tail) = tail.lock() {
+        if tail.len() >= 24 {
+            tail.pop_front();
+        }
+        tail.push_back(line.to_string());
+    }
+}
+
+fn tail_detail(tail: &Arc<Mutex<VecDeque<String>>>, fallback: &str) -> String {
+    let detail = tail
+        .lock()
+        .ok()
+        .and_then(|tail| {
+            tail.iter()
+                .rev()
+                .find(|line| !line.trim().is_empty())
+                .cloned()
+        })
+        .unwrap_or_else(|| fallback.to_string());
+    trim_detail(&detail, fallback)
+}
+
+impl SteamCmdProgressTracker {
+    fn update(
+        &mut self,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+        percent: Option<f64>,
+        now: Instant,
+        force_emit: bool,
+    ) -> (TransferSnapshot, bool) {
+        self.downloaded_bytes = downloaded_bytes;
+        self.total_bytes = total_bytes;
+        self.percent = match total_bytes {
+            Some(total) if total > 0 => Some(percent_from_bytes(downloaded_bytes, total)),
+            _ => percent,
+        };
+
+        let should_sample = self
+            .last_sample
+            .map(|(last_at, last_bytes)| {
+                downloaded_bytes < last_bytes
+                    || now.duration_since(last_at) >= Duration::from_millis(250)
+            })
+            .unwrap_or(true);
+
+        if should_sample {
+            if let Some((last_at, last_bytes)) = self.last_sample {
+                let elapsed = now.duration_since(last_at).as_secs_f64();
+                if elapsed > 0.0 && downloaded_bytes >= last_bytes {
+                    self.bytes_per_second =
+                        ((downloaded_bytes - last_bytes) as f64 / elapsed).round() as u64;
+                } else if downloaded_bytes < last_bytes {
+                    self.bytes_per_second = 0;
+                }
+            }
+            self.last_sample = Some((now, downloaded_bytes));
+        }
+
+        let reached_total = total_bytes
+            .map(|total| total > 0 && downloaded_bytes >= total)
+            .unwrap_or(false);
+        let should_emit = force_emit
+            || self
+                .last_emit_at
+                .map(|last_at| now.duration_since(last_at) >= Duration::from_millis(200))
+                .unwrap_or(true)
+            || reached_total;
+
+        if should_emit {
+            self.last_emit_at = Some(now);
+        }
+
+        (self.snapshot(), should_emit)
+    }
+
+    fn snapshot(&self) -> TransferSnapshot {
+        TransferSnapshot {
+            percent: self.percent,
+            downloaded_bytes: self.downloaded_bytes,
+            total_bytes: self.total_bytes,
+            bytes_per_second: self.bytes_per_second,
+        }
+    }
+}
+
+fn percent_from_bytes(downloaded_bytes: u64, total_bytes: u64) -> f64 {
+    if total_bytes == 0 {
+        return 0.0;
+    }
+    ((downloaded_bytes as f64 / total_bytes as f64) * 100.0).clamp(0.0, 100.0)
+}
+
+fn parse_percent(value: &str) -> Option<f64> {
+    let number = value
+        .trim()
+        .split_whitespace()
+        .next()?
+        .parse::<f64>()
+        .ok()?;
+    Some(number.clamp(0.0, 100.0))
+}
+
+fn parse_byte_count(value: &str) -> Option<u64> {
+    let digits: String = value.chars().filter(|ch| ch.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<u64>().ok()
+}
+
+fn normalize_steamcmd_phase(state: &str) -> String {
+    let lower = state.to_ascii_lowercase();
+    if lower.contains("download") {
+        "downloading"
+    } else if lower.contains("verify") || lower.contains("validat") {
+        "verifying"
+    } else if lower.contains("prealloc") {
+        "preallocating"
+    } else if lower.contains("commit") {
+        "committing"
+    } else {
+        "running"
+    }
+    .to_string()
+}
+
+fn steamcmd_progress_message(phase: &str, state: &str) -> String {
+    match phase {
+        "downloading" => "SteamCMD 正在下载服务端文件".to_string(),
+        "verifying" => "SteamCMD 正在校验服务端文件".to_string(),
+        "preallocating" => "SteamCMD 正在预分配文件".to_string(),
+        "committing" => "SteamCMD 正在提交更新".to_string(),
+        _ if !state.trim().is_empty() => format!("SteamCMD {}", state.trim()),
+        _ => "SteamCMD 正在处理更新".to_string(),
+    }
+}
+
+fn parse_steamcmd_progress_line(line: &str) -> Option<ParsedSteamCmdProgress> {
+    let lower_line = line.to_ascii_lowercase();
+    let progress_index = lower_line.find("progress:")?;
+    let after_progress = &line[progress_index + "progress:".len()..];
+    let open_paren = after_progress.find('(')?;
+    let close_paren = after_progress[open_paren + 1..].find(')')? + open_paren + 1;
+    let percent = parse_percent(&after_progress[..open_paren]);
+    let byte_pair = &after_progress[open_paren + 1..close_paren];
+    let (downloaded_text, total_text) = byte_pair.split_once('/')?;
+    let downloaded_bytes = parse_byte_count(downloaded_text)?;
+    let total_bytes = parse_byte_count(total_text).filter(|total| *total > 0);
+
+    let state_source = line[..progress_index].trim().trim_end_matches(',');
+    let state = state_source
+        .rsplit_once(')')
+        .map(|(_, state)| state)
+        .unwrap_or(state_source)
+        .trim()
+        .trim_start_matches(',')
+        .trim();
+    let phase = normalize_steamcmd_phase(state);
+    let message = steamcmd_progress_message(&phase, state);
+    let percent = total_bytes
+        .map(|total| percent_from_bytes(downloaded_bytes, total))
+        .or(percent);
+
+    Some(ParsedSteamCmdProgress {
+        phase,
+        message,
+        percent,
+        downloaded_bytes,
+        total_bytes,
+    })
+}
+
+fn acf_u64(content: &str, key: &str) -> Option<u64> {
+    content.lines().find_map(|line| {
+        let mut parts = line.split('"');
+        let _ = parts.next()?;
+        let found_key = parts.next()?;
+        let _ = parts.next()?;
+        let value = parts.next()?;
+        if found_key == key {
+            value.parse::<u64>().ok()
+        } else {
+            None
+        }
+    })
+}
+
+fn parse_manifest_progress(content: &str) -> Option<ManifestProgress> {
+    let bytes_to_download = acf_u64(content, "BytesToDownload").unwrap_or(0);
+    let bytes_downloaded = acf_u64(content, "BytesDownloaded").unwrap_or(0);
+    let bytes_to_stage = acf_u64(content, "BytesToStage").unwrap_or(0);
+    let bytes_staged = acf_u64(content, "BytesStaged").unwrap_or(0);
+
+    if bytes_to_download > 0 && bytes_downloaded < bytes_to_download {
+        return Some(ManifestProgress {
+            phase: "downloading".to_string(),
+            downloaded_bytes: bytes_downloaded,
+            total_bytes: Some(bytes_to_download),
+        });
+    }
+
+    if bytes_to_stage > 0 {
+        return Some(ManifestProgress {
+            phase: if bytes_staged < bytes_to_stage {
+                "committing"
+            } else {
+                "verifying"
+            }
+            .to_string(),
+            downloaded_bytes: bytes_staged.min(bytes_to_stage),
+            total_bytes: Some(bytes_to_stage),
+        });
+    }
+
+    None
+}
+
+fn spawn_manifest_progress_monitor(
+    install_path: &Path,
+    process_id: Option<u32>,
+    progress: SteamCmdProgressSink,
+    stop: Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    let manifest_path = install_path
+        .join("steamapps")
+        .join(format!("appmanifest_{ASA_DEDICATED_SERVER_APP_ID}.acf"));
+    let downloading_path = install_path
+        .join("steamapps")
+        .join("downloading")
+        .join(ASA_DEDICATED_SERVER_APP_ID);
+
+    tokio::spawn(async move {
+        let mut io_baseline: Option<ProcessTransferCounters> = None;
+        let mut downloading_size_baseline: Option<u64> = None;
+        let mut manifest_baseline = 0_u64;
+        let mut ticker = interval(Duration::from_secs(1));
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        ticker.tick().await;
+
+        while !stop.load(Ordering::SeqCst) {
+            if let Ok(content) = tokio::fs::read_to_string(&manifest_path).await {
+                if let Some(mut manifest) = parse_manifest_progress(&content) {
+                    if manifest.phase == "downloading" {
+                        let manifest_changed = manifest.downloaded_bytes != manifest_baseline;
+                        let mut estimated_delta = 0_u64;
+
+                        if let Some(current_transfer) = process_transfer_counters(process_id) {
+                            if io_baseline.is_none() || manifest_changed {
+                                io_baseline = Some(current_transfer);
+                            }
+
+                            if let Some(base_transfer) = io_baseline {
+                                estimated_delta = estimated_delta.max(
+                                    current_transfer.estimated_download_delta_since(base_transfer),
+                                );
+                            }
+                        }
+
+                        if let Some(current_size) = directory_size_bytes(&downloading_path) {
+                            if downloading_size_baseline.is_none() || manifest_changed {
+                                downloading_size_baseline = Some(current_size);
+                            }
+
+                            if let Some(base_size) = downloading_size_baseline {
+                                estimated_delta =
+                                    estimated_delta.max(current_size.saturating_sub(base_size));
+                            }
+                        }
+
+                        manifest_baseline = manifest.downloaded_bytes;
+
+                        if let Some(total) = manifest.total_bytes {
+                            manifest.downloaded_bytes = manifest
+                                .downloaded_bytes
+                                .saturating_add(estimated_delta)
+                                .min(total);
+                        }
+                    }
+
+                    let percent = manifest
+                        .total_bytes
+                        .map(|total| percent_from_bytes(manifest.downloaded_bytes, total));
+                    emit_steamcmd_transfer_progress(
+                        &progress,
+                        ParsedSteamCmdProgress {
+                            phase: manifest.phase,
+                            message: "SteamCMD 正在下载/更新服务端文件".to_string(),
+                            percent,
+                            downloaded_bytes: manifest.downloaded_bytes,
+                            total_bytes: manifest.total_bytes,
+                        },
+                        Some(format!("manifest: {}", manifest_path.display())),
+                        true,
+                    );
+                }
+            }
+            ticker.tick().await;
+        }
+    })
+}
+
+fn directory_size_bytes(path: &Path) -> Option<u64> {
+    if !path.is_dir() {
+        return None;
+    }
+
+    let mut total = 0_u64;
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(current) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if metadata.is_dir() {
+                pending.push(entry.path());
+            } else if metadata.is_file() {
+                total = total.saturating_add(metadata.len());
+            }
+        }
+    }
+
+    Some(total)
+}
+
+#[cfg(windows)]
+fn process_transfer_counters(process_id: Option<u32>) -> Option<ProcessTransferCounters> {
+    let process_id = process_id?;
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id);
+        if handle.is_null() {
+            return None;
+        }
+
+        let mut counters = IO_COUNTERS::default();
+        let ok = GetProcessIoCounters(handle, &mut counters);
+        let _ = CloseHandle(handle);
+        if ok == 0 {
+            None
+        } else {
+            Some(ProcessTransferCounters {
+                read: counters.ReadTransferCount,
+                write: counters.WriteTransferCount,
+                other: counters.OtherTransferCount,
+            })
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn process_transfer_counters(_process_id: Option<u32>) -> Option<ProcessTransferCounters> {
+    None
+}
+
+fn handle_steamcmd_progress_line(sink: &SteamCmdProgressSink, line: &str) -> bool {
+    let Some(parsed) = parse_steamcmd_progress_line(line) else {
+        return false;
+    };
+    emit_steamcmd_transfer_progress(sink, parsed, Some(line.to_string()), false);
+    true
+}
+
+fn emit_steamcmd_transfer_progress(
+    sink: &SteamCmdProgressSink,
+    parsed: ParsedSteamCmdProgress,
+    detail: Option<String>,
+    force_emit: bool,
+) {
+    let now = Instant::now();
+    let (snapshot, should_emit) = match sink.tracker.lock() {
+        Ok(mut tracker) => tracker.update(
+            parsed.downloaded_bytes,
+            parsed.total_bytes,
+            parsed.percent,
+            now,
+            force_emit,
+        ),
+        Err(_) => return,
+    };
+
+    if should_emit {
+        let payload = JobProgress {
+            job_id: format!("job-{}", now_millis()),
+            instance_id: Some(sink.instance_id.clone()),
+            phase: parsed.phase,
+            percent: snapshot.percent,
+            message: parsed.message,
+            detail,
+            downloaded_bytes: snapshot.downloaded_bytes,
+            total_bytes: snapshot.total_bytes,
+            bytes_per_second: snapshot.bytes_per_second,
+        };
+        let _ = sink.channel.send(payload.clone());
+        let _ = sink.app.emit("asa:job-progress", payload);
+    }
+}
+
+fn transfer_snapshot(sink: &SteamCmdProgressSink) -> TransferSnapshot {
+    sink.tracker
+        .lock()
+        .map(|tracker| tracker.snapshot())
+        .unwrap_or_default()
+}
+
+fn handle_command_output_line(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance_name: &str,
+    level: &'static str,
+    tail: &Arc<Mutex<VecDeque<String>>>,
+    progress: Option<&SteamCmdProgressSink>,
+    line: &str,
+) {
+    let line = line.trim();
+    if line.is_empty() {
+        return;
+    }
+    remember_tail(tail, line);
+
+    if progress
+        .map(|sink| handle_steamcmd_progress_line(sink, line))
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    let _ = emit_instance_log(app, runtime, instance_name, level, line);
+}
+
+fn spawn_command_log_reader<R>(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance_name: &str,
+    stream: Option<R>,
+    level: &'static str,
+    tail: Arc<Mutex<VecDeque<String>>>,
+    progress: Option<SteamCmdProgressSink>,
+) -> Option<JoinHandle<()>>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    let stream = stream?;
+    let app = app.clone();
+    let runtime = runtime.clone();
+    let instance_name = instance_name.to_string();
+    Some(tokio::spawn(async move {
+        let mut stream = stream;
+        let mut buffer = [0_u8; 4096];
+        let mut pending = Vec::new();
+
+        loop {
+            let read = match stream.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(_) => break,
+            };
+            for byte in &buffer[..read] {
+                if *byte == b'\r' || *byte == b'\n' {
+                    let line = String::from_utf8_lossy(&pending);
+                    handle_command_output_line(
+                        &app,
+                        &runtime,
+                        &instance_name,
+                        level,
+                        &tail,
+                        progress.as_ref(),
+                        &line,
+                    );
+                    pending.clear();
+                } else {
+                    pending.push(*byte);
+                    if pending.len() > 8192 {
+                        let line = String::from_utf8_lossy(&pending);
+                        handle_command_output_line(
+                            &app,
+                            &runtime,
+                            &instance_name,
+                            level,
+                            &tail,
+                            progress.as_ref(),
+                            &line,
+                        );
+                        pending.clear();
+                    }
+                }
+            }
+        }
+
+        if !pending.is_empty() {
+            let line = String::from_utf8_lossy(&pending);
+            handle_command_output_line(
+                &app,
+                &runtime,
+                &instance_name,
+                level,
+                &tail,
+                progress.as_ref(),
+                &line,
+            );
+        }
+    }))
+}
+
+#[cfg(windows)]
+fn spawn_process_window_hider(pid: u32) {
+    tokio::spawn(async move {
+        for _ in 0..40 {
+            hide_process_windows(pid);
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    });
+}
+
+#[cfg(windows)]
+fn hide_process_windows(pid: u32) {
+    let _ = hide_attached_console_window(pid);
+    let _ = hide_windows_by_pid_or_title(pid);
+}
+
+#[cfg(windows)]
+fn hide_attached_console_window(pid: u32) -> bool {
+    unsafe {
+        if !GetConsoleWindow().is_null() {
+            return false;
+        }
+        if AttachConsole(pid) == 0 {
+            return false;
+        }
+
+        let window = GetConsoleWindow();
+        let hidden = if window.is_null() {
+            false
+        } else {
+            ShowWindow(window, SW_HIDE);
+            true
+        };
+        let _ = FreeConsole();
+        hidden
+    }
+}
+
+#[cfg(windows)]
+fn hide_windows_by_pid_or_title(pid: u32) -> bool {
+    struct WindowHideContext {
+        pid: u32,
+        title_pid: String,
+        hidden: bool,
+    }
+
+    unsafe extern "system" fn enum_window(window: HWND, parameter: LPARAM) -> BOOL {
+        if parameter == 0 {
+            return 1;
+        }
+
+        let context = unsafe { &mut *(parameter as *mut WindowHideContext) };
+        let mut window_pid = 0_u32;
+        unsafe {
+            GetWindowThreadProcessId(window, &mut window_pid);
+        }
+
+        let process_match = window_pid == context.pid;
+        let title_match = window_title_contains(window, &context.title_pid);
+        if (process_match || title_match) && unsafe { IsWindowVisible(window) } != 0 {
+            unsafe {
+                ShowWindow(window, SW_HIDE);
+            }
+            context.hidden = true;
+        }
+
+        1
+    }
+
+    let mut context = WindowHideContext {
+        pid,
+        title_pid: pid.to_string(),
+        hidden: false,
+    };
+
+    unsafe {
+        EnumWindows(Some(enum_window), &mut context as *mut _ as LPARAM);
+    }
+
+    context.hidden
+}
+
+#[cfg(windows)]
+fn window_title_contains(window: HWND, needle: &str) -> bool {
+    let length = unsafe { GetWindowTextLengthW(window) };
+    if length <= 0 {
+        return false;
+    }
+
+    let mut buffer = vec![0_u16; length as usize + 1];
+    let copied = unsafe { GetWindowTextW(window, buffer.as_mut_ptr(), buffer.len() as i32) };
+    if copied <= 0 {
+        return false;
+    }
+
+    String::from_utf16_lossy(&buffer[..copied as usize]).contains(needle)
+}
+
+#[cfg(windows)]
+async fn kill_process_tree(pid: u32) {
+    let mut command = Command::new("taskkill");
+    command
+        .arg("/PID")
+        .arg(pid.to_string())
+        .arg("/T")
+        .arg("/F")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let _ = timeout(Duration::from_secs(5), command.status()).await;
+}
+
+#[cfg(not(windows))]
+async fn kill_process_tree(_pid: u32) {}
+
+async fn wait_for_log_readers(readers: Vec<Option<JoinHandle<()>>>) {
+    for reader in readers.into_iter().flatten() {
+        let _ = timeout(Duration::from_secs(2), reader).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_steamcmd_download_progress() {
+        let parsed = parse_steamcmd_progress_line(
+            "Update state (0x61) downloading, Progress: 12.34 (1234000 / 10000000)",
+        )
+        .expect("SteamCMD progress line should parse");
+
+        assert_eq!(parsed.phase, "downloading");
+        assert!(matches!(parsed.percent, Some(percent) if (percent - 12.34).abs() < 0.001));
+        assert_eq!(parsed.downloaded_bytes, 1_234_000);
+        assert_eq!(parsed.total_bytes, Some(10_000_000));
+    }
+
+    #[test]
+    fn treats_zero_total_progress_as_unknown_size() {
+        let parsed = parse_steamcmd_progress_line(
+            "Update state (0x3) reconfiguring, progress: 0.00 (0 / 0)",
+        )
+        .expect("SteamCMD zero-size progress line should parse");
+
+        assert_eq!(parsed.phase, "running");
+        assert_eq!(parsed.percent, Some(0.0));
+        assert_eq!(parsed.downloaded_bytes, 0);
+        assert_eq!(parsed.total_bytes, None);
+    }
+
+    #[test]
+    fn parses_manifest_download_progress() {
+        let manifest = r#"
+"AppState"
+{
+    "BytesToDownload"        "8248424336"
+    "BytesDownloaded"        "1678229152"
+    "BytesToStage"        "13202439198"
+    "BytesStaged"        "4081357112"
+}
+"#;
+        let parsed = parse_manifest_progress(manifest).expect("manifest progress should parse");
+
+        assert_eq!(parsed.phase, "downloading");
+        assert_eq!(parsed.downloaded_bytes, 1_678_229_152);
+        assert_eq!(parsed.total_bytes, Some(8_248_424_336));
+    }
 }
 
 fn open_directory(path: &Path) -> Result<(), String> {

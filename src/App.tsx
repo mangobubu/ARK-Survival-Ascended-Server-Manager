@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AppstoreAddOutlined,
   CheckCircleOutlined,
@@ -102,6 +102,109 @@ function statusMeta(status: ServerStatus) {
   return { color: 'default', text: '⊖ 已停止' }
 }
 
+function isActiveJobProgress(progress?: JobProgress) {
+  return Boolean(progress && !['completed', 'cancelled', 'failed'].includes(progress.phase))
+}
+
+function formatJobBytes(value: number | null | undefined) {
+  if (!Number.isFinite(value) || !value || value <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let size = value
+  let unitIndex = 0
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+  const digits = size >= 100 || unitIndex === 0 ? 0 : size >= 10 ? 1 : 2
+  return `${size.toFixed(digits)} ${units[unitIndex]}`
+}
+
+function phaseText(phase: string) {
+  const labels: Record<string, string> = {
+    preparing: '准备中',
+    running: '下载/更新',
+    downloading: '下载/更新',
+    verifying: '校验中',
+    preallocating: '预分配',
+    committing: '写入中',
+  }
+  return labels[phase] ?? phase
+}
+
+function parseSteamCmdProgressLog(message: string) {
+  const match = message.match(/progress\s*:\s*([\d.]+)\s*\(\s*([\d,]+)\s*\/\s*([\d,]+)\s*\)/i)
+  if (!match) return null
+  const percent = Number.parseFloat(match[1])
+  const downloadedBytes = Number.parseInt(match[2].replaceAll(',', ''), 10)
+  const totalBytes = Number.parseInt(match[3].replaceAll(',', ''), 10)
+  if (!Number.isFinite(percent) || !Number.isFinite(downloadedBytes)) return null
+
+  const lowerMessage = message.toLowerCase()
+  const phase = lowerMessage.includes('download')
+    ? 'downloading'
+    : lowerMessage.includes('validat') || lowerMessage.includes('verify')
+      ? 'verifying'
+      : lowerMessage.includes('prealloc')
+        ? 'preallocating'
+        : lowerMessage.includes('commit')
+          ? 'committing'
+          : 'running'
+
+  return {
+    phase,
+    percent,
+    downloadedBytes,
+    totalBytes: totalBytes > 0 ? totalBytes : null,
+  }
+}
+
+function InstanceJobProgress({ progress }: { progress?: JobProgress }) {
+  if (!progress) return null
+  const totalKnown = Number.isFinite(progress.totalBytes) && (progress.totalBytes ?? 0) > 0
+  const downloadedBytes = progress.downloadedBytes ?? 0
+  const bytesPerSecond = progress.bytesPerSecond ?? 0
+  const hasTransferInfo = downloadedBytes > 0 || totalKnown
+  const percent = progress.percent != null ? `${Math.max(0, Math.min(100, progress.percent)).toFixed(1)}%` : '--'
+  const speedText = bytesPerSecond > 0 ? `${formatJobBytes(bytesPerSecond)}/s` : hasTransferInfo ? '0 B/s' : '--'
+  const downloadedText = downloadedBytes > 0 ? formatJobBytes(downloadedBytes) : '--'
+  const totalText = totalKnown ? formatJobBytes(progress.totalBytes) : '--'
+
+  return (
+    <div className="instance-job-progress" onClick={(event) => event.stopPropagation()}>
+      <div className="instance-job-progress__line">
+        <span className="instance-job-progress__phase">{phaseText(progress.phase)}</span>
+        <span>进度 <b>{percent}</b></span>
+        <span>速度 <b>{speedText}</b></span>
+        <span>已下载 <b>{downloadedText}</b></span>
+        <span>总大小 <b>{totalText}</b></span>
+      </div>
+    </div>
+  )
+}
+
+function mergeJobProgress(previous: JobProgress | undefined, next: JobProgress): JobProgress {
+  const previousHasBytes = (previous?.downloadedBytes ?? 0) > 0 || (previous?.totalBytes ?? 0) > 0
+  const nextHasBytes = (next.downloadedBytes ?? 0) > 0 || (next.totalBytes ?? 0) > 0
+
+  if (previous && previousHasBytes && !nextHasBytes) {
+    return {
+      ...previous,
+      jobId: next.jobId,
+      phase: next.phase,
+      message: next.message,
+      detail: next.detail ?? previous.detail,
+    }
+  }
+
+  return {
+    ...next,
+    percent: next.percent ?? previous?.percent ?? null,
+    downloadedBytes: next.downloadedBytes > 0 ? next.downloadedBytes : previous?.downloadedBytes ?? 0,
+    totalBytes: next.totalBytes && next.totalBytes > 0 ? next.totalBytes : previous?.totalBytes ?? null,
+    bytesPerSecond: nextHasBytes ? Math.max(0, next.bytesPerSecond) : previous?.bytesPerSecond ?? 0,
+  }
+}
+
 export default function App() {
   const [instances, setInstances] = useState<ServerInstance[]>([])
   const [selectedId, setSelectedId] = useState('')
@@ -113,6 +216,10 @@ export default function App() {
   const [globalSettings, setGlobalSettings] = useState<GlobalSettings>(loadGlobalSettings)
   const [jobProgress, setJobProgress] = useState<Record<string, JobProgress>>({})
   const [checkingMods, setCheckingMods] = useState(false)
+  const [autoScrollLogs, setAutoScrollLogs] = useState(true)
+  const logConsoleRef = useRef<HTMLDivElement>(null)
+  const instancesRef = useRef<ServerInstance[]>([])
+  const steamCmdProgressSamplesRef = useRef<Record<string, { downloadedBytes: number; timestamp: number }>>({})
   const [messageApi, contextHolder] = message.useMessage()
   const [modal, modalContext] = Modal.useModal()
 
@@ -120,6 +227,10 @@ export default function App() {
   const running = instances.filter((item) => item.status === 'running').length
   const totalPlayers = instances.reduce((sum, item) => sum + item.players, 0)
   const playerCapacity = instances.reduce((sum, item) => sum + item.maxPlayers, 0)
+
+  useEffect(() => {
+    instancesRef.current = instances
+  }, [instances])
 
   const replaceInstance = useCallback((next: ServerInstance) => {
     setInstances((current) => current.some((item) => item.id === next.id)
@@ -131,8 +242,47 @@ export default function App() {
     setLogs((current) => [...current, line].slice(-500))
   }, [])
 
+  const updateJobProgressFromLog = useCallback((line: LogLine) => {
+    const parsed = parseSteamCmdProgressLog(line.message)
+    if (!parsed) return
+
+    const instance = instancesRef.current.find((item) => item.name === line.instance)
+    if (!instance) return
+
+    const now = Date.now()
+    const previous = steamCmdProgressSamplesRef.current[instance.id]
+    const elapsedSeconds = previous ? (now - previous.timestamp) / 1000 : 0
+    const bytesPerSecond = previous && elapsedSeconds > 0 && parsed.downloadedBytes >= previous.downloadedBytes
+      ? Math.round((parsed.downloadedBytes - previous.downloadedBytes) / elapsedSeconds)
+      : 0
+
+    steamCmdProgressSamplesRef.current[instance.id] = {
+      downloadedBytes: parsed.downloadedBytes,
+      timestamp: now,
+    }
+
+    setJobProgress((current) => {
+      const next: JobProgress = {
+        jobId: `steamcmd-log-${line.id}`,
+        instanceId: instance.id,
+        phase: parsed.phase,
+        percent: parsed.percent,
+        message: 'SteamCMD progress',
+        detail: line.message,
+        downloadedBytes: parsed.downloadedBytes,
+        totalBytes: parsed.totalBytes,
+        bytesPerSecond,
+      }
+      return {
+        ...current,
+        [instance.id]: mergeJobProgress(current[instance.id], next),
+      }
+    })
+  }, [])
+
   const loadInstances = useCallback(async () => {
     const loaded = await listInstances()
+    instancesRef.current = loaded
     setInstances(loaded)
     setSelectedId((current) => {
       if (current && loaded.some((item) => item.id === current)) return current
@@ -154,8 +304,10 @@ export default function App() {
   }, [])
 
   const refreshLogs = useCallback(async () => {
-    setLogs(await queryLogs(500))
-  }, [])
+    const loadedLogs = await queryLogs(500)
+    setLogs(loadedLogs)
+    loadedLogs.forEach(updateJobProgressFromLog)
+  }, [updateJobProgressFromLog])
 
   useEffect(() => {
     const unsubscribe = subscribeGlobalSettings(setGlobalSettings)
@@ -176,15 +328,34 @@ export default function App() {
   }, [loadInstanceDetails, messageApi, selectedId])
 
   useEffect(() => {
+    if (!autoScrollLogs) return
+    const consoleElement = logConsoleRef.current
+    if (consoleElement) {
+      consoleElement.scrollTop = consoleElement.scrollHeight
+    }
+  }, [autoScrollLogs, logs.length])
+
+  useEffect(() => {
     let disposed = false
     const unlisteners: Array<() => void> = []
 
     void listen<LogLine>('asa:log-line', (event) => {
-      if (!disposed) appendLogLine(event.payload)
+      if (!disposed) {
+        appendLogLine(event.payload)
+        updateJobProgressFromLog(event.payload)
+      }
     }).then((unlisten) => unlisteners.push(unlisten))
 
     void listen<ServerInstance>('asa:instance-status', (event) => {
       if (!disposed) replaceInstance(event.payload)
+    }).then((unlisten) => unlisteners.push(unlisten))
+
+    void listen<JobProgress>('asa:job-progress', (event) => {
+      if (disposed || !event.payload.instanceId) return
+      setJobProgress((current) => ({
+        ...current,
+        [event.payload.instanceId as string]: mergeJobProgress(current[event.payload.instanceId as string], event.payload),
+      }))
     }).then((unlisten) => unlisteners.push(unlisten))
 
     void listen<InstanceCreatedEvent>(ADD_INSTANCE_CREATED_EVENT, (event) => {
@@ -203,18 +374,55 @@ export default function App() {
       disposed = true
       unlisteners.forEach((unlisten) => unlisten())
     }
-  }, [appendLogLine, messageApi, refreshLogs, replaceInstance])
+  }, [appendLogLine, messageApi, refreshLogs, replaceInstance, updateJobProgressFromLog])
 
   const installInstance = async (item: ServerInstance) => {
     try {
       const updated = await installOrUpdateInstance(item.id, (progress) => {
-        setJobProgress((current) => ({ ...current, [item.id]: progress }))
+        setJobProgress((current) => ({
+          ...current,
+          [item.id]: mergeJobProgress(current[item.id], progress),
+        }))
       })
       replaceInstance(updated)
       messageApi.success(`${item.name} 安装/更新完成`)
       await refreshLogs()
     } catch (error) {
-      messageApi.error(`${item.name} 安装/更新失败：${String(error)}`)
+      const errorText = String(error)
+      if (errorText.includes('取消')) {
+        setJobProgress((current) => ({
+          ...current,
+          [item.id]: {
+            jobId: `cancelled-${Date.now()}`,
+            instanceId: item.id,
+            phase: 'cancelled',
+            percent: 0,
+            message: '安装/更新已取消',
+            detail: null,
+            downloadedBytes: 0,
+            totalBytes: null,
+            bytesPerSecond: 0,
+          },
+        }))
+        messageApi.info(`${item.name} 安装/更新已取消`)
+      } else {
+        setJobProgress((current) => ({
+          ...current,
+          [item.id]: {
+            jobId: `failed-${Date.now()}`,
+            instanceId: item.id,
+            phase: 'failed',
+            percent: 0,
+            message: errorText,
+            detail: errorText,
+            downloadedBytes: 0,
+            totalBytes: null,
+            bytesPerSecond: 0,
+          },
+        }))
+        messageApi.error(`${item.name} 安装/更新失败：${errorText}`)
+      }
+      await refreshLogs()
     }
   }
 
@@ -234,18 +442,37 @@ export default function App() {
       messageApi.info(`${item.name} 已停止`)
       return
     }
+    const isUpdating = item.status === 'updating'
     modal.confirm({
-      title: `停止 ${item.name}？`,
+      title: isUpdating ? `取消 ${item.name} 的安装/更新？` : `停止 ${item.name}？`,
       icon: <ExclamationCircleFilled />,
-      content: '管理器将优先通过 RCON 保存世界，再停止服务端进程。',
-      okText: '保存并停止',
+      content: isUpdating
+        ? '管理器将结束当前 SteamCMD 更新进程树，并把实例状态恢复为已停止。'
+        : '管理器将优先通过 RCON 保存世界，再停止服务端进程。',
+      okText: isUpdating ? '取消更新' : '保存并停止',
       cancelText: '取消',
       okButtonProps: { danger: true },
       onOk: async () => {
         const updated = await stopInstanceCommand(item.id)
         replaceInstance(updated)
+        if (isUpdating) {
+          setJobProgress((current) => ({
+            ...current,
+            [item.id]: {
+              jobId: `cancelled-${Date.now()}`,
+              instanceId: item.id,
+              phase: 'cancelled',
+              percent: 0,
+              message: '安装/更新已取消',
+              detail: null,
+              downloadedBytes: 0,
+              totalBytes: null,
+              bytesPerSecond: 0,
+            },
+          }))
+        }
         await refreshLogs()
-        messageApi.success(`${item.name} 已停止`)
+        messageApi.success(isUpdating ? `${item.name} 安装/更新已取消` : `${item.name} 已停止`)
       },
     })
   }
@@ -313,15 +540,13 @@ export default function App() {
       }
 
       const nextIndex = instances.length + 1
-      const maxGamePort = instances.length ? Math.max(...instances.map((item) => item.gamePort)) : 7857
-      const maxQueryPort = instances.length ? Math.max(...instances.map((item) => item.queryPort)) : 27095
-      const maxRconPort = instances.length ? Math.max(...instances.map((item) => item.rconPort)) : 32339
+      const lastInstance = instances.at(-1)
       const params = new URLSearchParams({
         window: 'add-instance',
         index: String(nextIndex),
-        gamePort: String(maxGamePort + 10),
-        queryPort: String(maxQueryPort + 10),
-        rconPort: String(maxRconPort + 1),
+        gamePort: String((lastInstance?.gamePort ?? 7857) + 10),
+        queryPort: String((lastInstance?.queryPort ?? 27095) + 10),
+        rconPort: String((lastInstance?.rconPort ?? 32330) + 10),
         serverRoot: globalSettings.serverStoragePath,
       })
 
@@ -503,7 +728,12 @@ export default function App() {
     },
   ], [messageApi, selectedId])
 
-  const selectedProgress = selected ? jobProgress[selected.id] : undefined
+  const activeProgressIds = useMemo(
+    () => instances
+      .filter((item) => item.status === 'updating' && isActiveJobProgress(jobProgress[item.id]))
+      .map((item) => item.id),
+    [instances, jobProgress],
+  )
 
   return (
     <div className="app-shell">
@@ -521,9 +751,6 @@ export default function App() {
 
       <main className="workspace">
         <SteamCmdSetup settings={globalSettings} onSettingsChange={setGlobalSettings} />
-        {selectedProgress && selectedProgress.phase !== 'completed' && (
-          <Progress percent={selectedProgress.percent ?? 0} status="active" strokeColor="#13b8ff" />
-        )}
         <section className="stats-grid">
           <StatCard icon={<CloudServerOutlined />} label="总服务器数" value={instances.length} suffix="个实例" />
           <StatCard icon={<CheckCircleOutlined />} label="运行中" value={`${running} / ${instances.length}`} suffix="个实例" tone="green" />
@@ -553,6 +780,12 @@ export default function App() {
                 size="small"
                 tableLayout="fixed"
                 scroll={{ y: 360 }}
+                expandable={{
+                  expandedRowKeys: activeProgressIds,
+                  expandedRowRender: (item) => <InstanceJobProgress progress={jobProgress[item.id]} />,
+                  rowExpandable: (item) => isActiveJobProgress(jobProgress[item.id]),
+                  showExpandColumn: false,
+                }}
                 rowSelection={{ selectedRowKeys: selectedRows, onChange: setSelectedRows, columnWidth: 36 }}
                 onRow={(item) => ({ onClick: () => { setSelectedId(item.id); setSelectedRows([item.id]) } })}
                 rowClassName={(item) => item.id === selectedId ? 'selected-instance-row' : ''}
@@ -562,9 +795,9 @@ export default function App() {
             <section className="surface cluster-log-card">
               <div className="surface__title">
                 <span><LineChartOutlined /> 集群日志 / 实例状态</span>
-                <Space><Checkbox defaultChecked>自动滚动</Checkbox><Button size="small" onClick={() => void clearLogs().then(() => setLogs([])).catch((error) => messageApi.error(`清空日志失败：${String(error)}`))}>清空日志</Button></Space>
+                <Space><Checkbox checked={autoScrollLogs} onChange={(event) => setAutoScrollLogs(event.target.checked)}>自动滚动</Checkbox><Button size="small" onClick={() => void clearLogs().then(() => setLogs([])).catch((error) => messageApi.error(`清空日志失败：${String(error)}`))}>清空日志</Button></Space>
               </div>
-              <div className="log-console">
+              <div className="log-console" ref={logConsoleRef}>
                 {logs.length === 0 ? <div className="empty-log">暂无日志</div> : logs.map((line) => (
                   <div className={`log-line log-line--${line.level}`} key={line.id}>
                     <span>[{line.time}]</span><b>[{line.instance}]</b><span>{line.message}</span>

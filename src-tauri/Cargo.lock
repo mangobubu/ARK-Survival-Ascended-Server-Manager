@@ -69,6 +69,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tempfile",
  "tokio",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

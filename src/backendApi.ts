@@ -5,9 +5,11 @@ import type {
   ExportResult,
   GlobalSettings,
   ImportResult,
+  InstancePortKind,
   JobProgress,
   LogLine,
   ModItem,
+  PortCheckResult,
   ServerConfig,
   ServerInstance,
 } from './types'
@@ -17,6 +19,9 @@ export const getSettings = () => invoke<GlobalSettings>('get_settings')
 export const saveSettings = (settings: GlobalSettings) => invoke<GlobalSettings>('save_settings', { settings })
 
 export const listInstances = () => invoke<ServerInstance[]>('list_instances')
+
+export const checkInstancePort = (port: number, portKind: InstancePortKind) =>
+  invoke<PortCheckResult>('check_instance_port', { port, portKind })
 
 export const createInstance = (payload: AddInstancePayload) => invoke<ServerInstance>('create_instance', { payload })
 

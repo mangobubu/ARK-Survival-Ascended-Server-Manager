@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ApartmentOutlined,
   CheckCircleOutlined,
@@ -14,14 +14,39 @@ import {
 import { emitTo } from '@tauri-apps/api/event'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { Button, Form, Input, InputNumber, Radio, Select, Space, Switch, Typography, message } from 'antd'
-import { createInstance } from './backendApi'
+import { checkInstancePort, createInstance } from './backendApi'
 import { defaultConfig, defaultGlobalSettings, serverMapOptions } from './data'
-import type { AddInstancePayload, InstanceCreatedEvent } from './types'
+import type { AddInstancePayload, InstanceCreatedEvent, InstancePortKind } from './types'
 import { ADD_INSTANCE_CREATED_EVENT, MAIN_WINDOW_LABEL } from './windowEvents'
 
 const { Text, Title } = Typography
 
 const formatMapLabel = (map: { name: string; zhName: string }) => `${map.zhName}(${map.name})`
+
+const PORT_FIELDS = [
+  { name: 'gamePort', label: '游戏端口' },
+  { name: 'queryPort', label: '查询端口' },
+  { name: 'rconPort', label: 'RCON 端口' },
+] as const
+
+type PortField = InstancePortKind
+type PortCheckStatus = 'idle' | 'checking' | 'available' | 'unavailable'
+
+interface PortCheckState {
+  status: PortCheckStatus
+  port?: number
+  message?: string
+}
+
+const createInitialPortChecks = (): Record<PortField, PortCheckState> => ({
+  gamePort: { status: 'idle' },
+  queryPort: { status: 'idle' },
+  rconPort: { status: 'idle' },
+})
+
+function isValidPort(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1024 && value <= 65535
+}
 
 interface AddInstanceFormValues {
   name: string
@@ -52,6 +77,8 @@ export default function AddInstanceWindow() {
   const [form] = Form.useForm<AddInstanceFormValues>()
   const [messageApi, contextHolder] = message.useMessage()
   const [submitting, setSubmitting] = useState(false)
+  const [portChecks, setPortChecks] = useState<Record<PortField, PortCheckState>>(createInitialPortChecks)
+  const portCheckRequestRef = useRef(0)
 
   const closeCurrentWindow = async () => {
     try {
@@ -82,6 +109,12 @@ export default function AddInstanceWindow() {
 
   const watchedValues = Form.useWatch([], form) ?? initialValues
   const selectedMap = serverMapOptions.find((item) => item.code === watchedValues.mapCode) ?? serverMapOptions[0]
+  const portsReady = PORT_FIELDS.every(({ name }) => {
+    const check = portChecks[name]
+    return check.status === 'available' && check.port === watchedValues[name]
+  })
+  const hasUnavailablePort = PORT_FIELDS.some(({ name }) => portChecks[name].status === 'unavailable')
+  const portPlanText = portsReady ? '可用' : hasUnavailablePort ? '不可用' : '检查中'
   const readyCount = [
     watchedValues.name,
     watchedValues.mapCode,
@@ -90,7 +123,143 @@ export default function AddInstanceWindow() {
     watchedValues.installPath,
   ].filter(Boolean).length
 
+  useEffect(() => {
+    const requestId = ++portCheckRequestRef.current
+    const portValues = PORT_FIELDS.map(({ name, label }) => ({ name, label, port: watchedValues[name] }))
+    const occurrences = new Map<number, number>()
+
+    for (const item of portValues) {
+      if (!isValidPort(item.port)) continue
+      occurrences.set(item.port, (occurrences.get(item.port) ?? 0) + 1)
+    }
+
+    const checkable = portValues.filter((item) => (
+      isValidPort(item.port) && (occurrences.get(item.port) ?? 0) === 1
+    ))
+
+    setPortChecks((current) => {
+      const next = { ...current }
+      for (const item of portValues) {
+        if (!isValidPort(item.port)) {
+          next[item.name] = { status: 'idle' }
+        } else if ((occurrences.get(item.port) ?? 0) > 1) {
+          next[item.name] = {
+            status: 'unavailable',
+            port: item.port,
+            message: '当前表单内端口重复',
+          }
+        } else {
+          next[item.name] = { status: 'checking', port: item.port }
+        }
+      }
+      return next
+    })
+
+    if (checkable.length === 0) return
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const results = await Promise.all(checkable.map(async (item) => {
+          try {
+            return {
+              ...item,
+              result: await checkInstancePort(item.port, item.name),
+              error: null,
+            }
+          } catch (error) {
+            return {
+              ...item,
+              result: null,
+              error,
+            }
+          }
+        }))
+
+        if (portCheckRequestRef.current !== requestId) return
+
+        const suggestedValues: Partial<Pick<AddInstanceFormValues, PortField>> = {}
+        for (const item of results) {
+          if (item.result?.exists && item.result.suggestedPort && item.result.suggestedPort !== item.port) {
+            suggestedValues[item.name] = item.result.suggestedPort
+          }
+        }
+
+        if (Object.keys(suggestedValues).length > 0) {
+          form.setFieldsValue(suggestedValues)
+          setPortChecks((current) => {
+            const next = { ...current }
+            for (const [name, port] of Object.entries(suggestedValues) as Array<[PortField, number]>) {
+              next[name] = { status: 'checking', port }
+            }
+            return next
+          })
+          return
+        }
+
+        setPortChecks((current) => {
+          const next = { ...current }
+          for (const item of results) {
+            if (form.getFieldValue(item.name) !== item.port) continue
+            if (item.error) {
+              next[item.name] = {
+                status: 'unavailable',
+                port: item.port,
+                message: `端口检查失败：${String(item.error)}`,
+              }
+            } else if (item.result?.available) {
+              next[item.name] = { status: 'available', port: item.port }
+            } else {
+              next[item.name] = {
+                status: 'unavailable',
+                port: item.port,
+                message: item.result?.reason ?? `${item.label}不可用`,
+              }
+            }
+          }
+          return next
+        })
+      })()
+    }, 220)
+
+    return () => window.clearTimeout(timer)
+  }, [form, watchedValues.gamePort, watchedValues.queryPort, watchedValues.rconPort])
+
+  const renderPortAddon = (field: PortField) => {
+    const check = portChecks[field]
+    if (check.status === 'available') {
+      return <span className="port-check-addon port-check-addon--available" role="img" aria-label="端口可用" title="端口可用">✅</span>
+    }
+    if (check.status === 'checking') {
+      return <span className="port-check-addon port-check-addon--checking" title="正在检查端口">…</span>
+    }
+    if (check.status === 'unavailable') {
+      return <span className="port-check-addon port-check-addon--unavailable" title={check.message}>!</span>
+    }
+    return <span className="port-check-addon port-check-addon--idle" />
+  }
+
+  const portItemStatus = (field: PortField) => {
+    const check = portChecks[field]
+    if (check.status === 'checking') return { validateStatus: 'validating' as const }
+    if (check.status === 'unavailable') {
+      return {
+        validateStatus: 'error' as const,
+        help: check.message,
+      }
+    }
+    return {}
+  }
+
   const handleFinish = async (values: AddInstanceFormValues) => {
+    const portsReadyForValues = PORT_FIELDS.every(({ name }) => {
+      const check = portChecks[name]
+      return check.status === 'available' && check.port === values[name]
+    })
+    if (!portsReadyForValues) {
+      messageApi.warning('请等待端口可用性检查完成')
+      return
+    }
+
     const map = serverMapOptions.find((item) => item.code === values.mapCode) ?? serverMapOptions[0]
     const payload: AddInstancePayload = {
       name: values.name.trim(),
@@ -182,14 +351,29 @@ export default function AddInstanceWindow() {
             <div className="add-instance-section">
               <div className="add-instance-section__title"><DeploymentUnitOutlined /> 端口与集群</div>
               <div className="add-instance-three-column">
-                <Form.Item label="游戏端口" name="gamePort" rules={[{ required: true, message: '请输入游戏端口' }]}>
-                  <InputNumber min={1024} max={65535} />
+                <Form.Item
+                  label="游戏端口"
+                  name="gamePort"
+                  rules={[{ required: true, message: '请输入游戏端口' }]}
+                  {...portItemStatus('gamePort')}
+                >
+                  <InputNumber min={1024} max={65535} addonAfter={renderPortAddon('gamePort')} />
                 </Form.Item>
-                <Form.Item label="查询端口" name="queryPort" rules={[{ required: true, message: '请输入查询端口' }]}>
-                  <InputNumber min={1024} max={65535} />
+                <Form.Item
+                  label="查询端口"
+                  name="queryPort"
+                  rules={[{ required: true, message: '请输入查询端口' }]}
+                  {...portItemStatus('queryPort')}
+                >
+                  <InputNumber min={1024} max={65535} addonAfter={renderPortAddon('queryPort')} />
                 </Form.Item>
-                <Form.Item label="RCON 端口" name="rconPort" rules={[{ required: true, message: '请输入 RCON 端口' }]}>
-                  <InputNumber min={1024} max={65535} />
+                <Form.Item
+                  label="RCON 端口"
+                  name="rconPort"
+                  rules={[{ required: true, message: '请输入 RCON 端口' }]}
+                  {...portItemStatus('rconPort')}
+                >
+                  <InputNumber min={1024} max={65535} addonAfter={renderPortAddon('rconPort')} />
                 </Form.Item>
               </div>
               <Form.Item label="集群 ID" name="clusterId" rules={[{ required: true, message: '请输入集群 ID' }]}>
@@ -233,7 +417,7 @@ export default function AddInstanceWindow() {
             <div className="add-instance-preview__title"><CheckCircleOutlined /> 创建预览</div>
             <div className="add-instance-progress">
               <div><span>基础资料</span><b>{readyCount >= 2 ? '完成' : '待补全'}</b></div>
-              <div><span>端口规划</span><b>{readyCount >= 4 ? '完成' : '待补全'}</b></div>
+              <div><span>端口规划</span><b>{portPlanText}</b></div>
               <div><span>实例目录</span><b>{watchedValues.installPath ? '完成' : '待补全'}</b></div>
             </div>
             <div className="add-instance-summary">
@@ -259,7 +443,7 @@ export default function AddInstanceWindow() {
           <Text type="secondary">原型创建不会立即启动服务器进程</Text>
           <Space>
             <Button htmlType="button" icon={<CloseOutlined />} onClick={() => void closeCurrentWindow()}>取消</Button>
-            <Button loading={submitting} type="primary" icon={<PlusOutlined />} htmlType="submit">添加实例</Button>
+            <Button disabled={!portsReady} loading={submitting} type="primary" icon={<PlusOutlined />} htmlType="submit">添加实例</Button>
           </Space>
         </footer>
       </Form>

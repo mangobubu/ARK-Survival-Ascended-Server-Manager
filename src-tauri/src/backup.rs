@@ -62,9 +62,12 @@ pub fn list_instance_backups(
     }
 
     let mut backups = Vec::new();
-    for entry in fs::read_dir(&instance_backup_dir)
-        .map_err(|error| format!("无法读取备份目录 {}：{error}", instance_backup_dir.display()))?
-    {
+    for entry in fs::read_dir(&instance_backup_dir).map_err(|error| {
+        format!(
+            "无法读取备份目录 {}：{error}",
+            instance_backup_dir.display()
+        )
+    })? {
         let entry = entry.map_err(|error| format!("读取备份目录项失败：{error}"))?;
         let path = entry.path();
         if path.extension().and_then(|value| value.to_str()) != Some("zip") {
@@ -152,8 +155,7 @@ fn add_directory_entries(
 fn unzip_to_directory(archive_path: &Path, target: &Path) -> Result<(), String> {
     let file = File::open(archive_path)
         .map_err(|error| format!("无法打开备份文件 {}：{error}", archive_path.display()))?;
-    let mut archive =
-        ZipArchive::new(file).map_err(|error| format!("备份压缩包无效：{error}"))?;
+    let mut archive = ZipArchive::new(file).map_err(|error| format!("备份压缩包无效：{error}"))?;
 
     for index in 0..archive.len() {
         let mut entry = archive
@@ -169,8 +171,7 @@ fn unzip_to_directory(archive_path: &Path, target: &Path) -> Result<(), String> 
             continue;
         }
         if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("创建恢复目录失败：{error}"))?;
+            fs::create_dir_all(parent).map_err(|error| format!("创建恢复目录失败：{error}"))?;
         }
         let mut output = File::create(&output_path)
             .map_err(|error| format!("创建恢复文件 {} 失败：{error}", output_path.display()))?;
@@ -249,4 +250,3 @@ mod tests {
         assert_eq!(fs::read_to_string(saved.join("world.ark")).unwrap(), "data");
     }
 }
-

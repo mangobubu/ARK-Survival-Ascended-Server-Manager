@@ -96,6 +96,16 @@ pub struct AddInstancePayload {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PortCheckResult {
+    pub port: u16,
+    pub available: bool,
+    pub exists: bool,
+    pub suggested_port: Option<u16>,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModItem {
     pub id: String,
     pub name: String,
@@ -121,9 +131,12 @@ pub struct JobProgress {
     pub job_id: String,
     pub instance_id: Option<String>,
     pub phase: String,
-    pub percent: Option<u8>,
+    pub percent: Option<f64>,
     pub message: String,
     pub detail: Option<String>,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub bytes_per_second: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -157,4 +170,3 @@ pub struct InstanceConfigBundle {
     pub config: Value,
     pub mods: Vec<ModItem>,
 }
-
