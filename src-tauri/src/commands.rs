@@ -27,18 +27,10 @@ use tokio::{
 };
 
 #[cfg(windows)]
-use windows_sys::core::BOOL;
-
-#[cfg(windows)]
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, HWND, LPARAM},
-    System::Console::{AttachConsole, FreeConsole, GetConsoleWindow},
+    Foundation::CloseHandle,
     System::Threading::{
         GetProcessIoCounters, IO_COUNTERS, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    },
-    UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-        IsWindowVisible, SW_HIDE, ShowWindow,
     },
 };
 
@@ -690,10 +682,6 @@ async fn start_instance_inner(
         .spawn()
         .map_err(|error| format!("启动 ASA 服务端失败：{error}"))?;
     let pid = child.id();
-    #[cfg(windows)]
-    if let Some(pid) = pid {
-        spawn_process_window_hider(pid);
-    }
     attach_process_log_reader(&app, &runtime, &instance, child.stdout.take(), "info");
     attach_process_log_reader(&app, &runtime, &instance, child.stderr.take(), "error");
 
@@ -1476,104 +1464,6 @@ where
             );
         }
     }))
-}
-
-#[cfg(windows)]
-fn spawn_process_window_hider(pid: u32) {
-    tokio::spawn(async move {
-        for _ in 0..40 {
-            hide_process_windows(pid);
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        }
-    });
-}
-
-#[cfg(windows)]
-fn hide_process_windows(pid: u32) {
-    let _ = hide_attached_console_window(pid);
-    let _ = hide_windows_by_pid_or_title(pid);
-}
-
-#[cfg(windows)]
-fn hide_attached_console_window(pid: u32) -> bool {
-    unsafe {
-        if !GetConsoleWindow().is_null() {
-            return false;
-        }
-        if AttachConsole(pid) == 0 {
-            return false;
-        }
-
-        let window = GetConsoleWindow();
-        let hidden = if window.is_null() {
-            false
-        } else {
-            ShowWindow(window, SW_HIDE);
-            true
-        };
-        let _ = FreeConsole();
-        hidden
-    }
-}
-
-#[cfg(windows)]
-fn hide_windows_by_pid_or_title(pid: u32) -> bool {
-    struct WindowHideContext {
-        pid: u32,
-        title_pid: String,
-        hidden: bool,
-    }
-
-    unsafe extern "system" fn enum_window(window: HWND, parameter: LPARAM) -> BOOL {
-        if parameter == 0 {
-            return 1;
-        }
-
-        let context = unsafe { &mut *(parameter as *mut WindowHideContext) };
-        let mut window_pid = 0_u32;
-        unsafe {
-            GetWindowThreadProcessId(window, &mut window_pid);
-        }
-
-        let process_match = window_pid == context.pid;
-        let title_match = window_title_contains(window, &context.title_pid);
-        if (process_match || title_match) && unsafe { IsWindowVisible(window) } != 0 {
-            unsafe {
-                ShowWindow(window, SW_HIDE);
-            }
-            context.hidden = true;
-        }
-
-        1
-    }
-
-    let mut context = WindowHideContext {
-        pid,
-        title_pid: pid.to_string(),
-        hidden: false,
-    };
-
-    unsafe {
-        EnumWindows(Some(enum_window), &mut context as *mut _ as LPARAM);
-    }
-
-    context.hidden
-}
-
-#[cfg(windows)]
-fn window_title_contains(window: HWND, needle: &str) -> bool {
-    let length = unsafe { GetWindowTextLengthW(window) };
-    if length <= 0 {
-        return false;
-    }
-
-    let mut buffer = vec![0_u16; length as usize + 1];
-    let copied = unsafe { GetWindowTextW(window, buffer.as_mut_ptr(), buffer.len() as i32) };
-    if copied <= 0 {
-        return false;
-    }
-
-    String::from_utf16_lossy(&buffer[..copied as usize]).contains(needle)
 }
 
 #[cfg(windows)]
