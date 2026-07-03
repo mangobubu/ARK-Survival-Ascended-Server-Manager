@@ -586,6 +586,9 @@ export default function App() {
       replaceInstance(event.payload.instance)
       setSelectedId(event.payload.instance.id)
       setSelectedRows([event.payload.instance.id])
+      void loadInstanceDetails(event.payload.instance.id).catch((error) => {
+        messageApi.error(`加载新增实例配置失败：${String(error)}`)
+      })
       void refreshLogs()
       messageApi.success(`${event.payload.instance.name} 已添加`)
       if (event.payload.autoInstall) {
@@ -597,7 +600,7 @@ export default function App() {
       disposed = true
       unlisteners.forEach((unlisten) => unlisten())
     }
-  }, [appendLogLine, messageApi, refreshLogs, replaceInstance, updateJobProgressFromLog])
+  }, [appendLogLine, loadInstanceDetails, messageApi, refreshLogs, replaceInstance, updateJobProgressFromLog])
 
   const installInstance = async (item: ServerInstance) => {
     try {

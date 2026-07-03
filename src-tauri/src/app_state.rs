@@ -1,6 +1,9 @@
-use crate::models::{
-    AddInstancePayload, GlobalSettings, LogLine, LogSource, ModItem, PortCheckResult,
-    ServerInstance, ServerLogKind, ServerStatus,
+use crate::{
+    ark_config,
+    models::{
+        AddInstancePayload, GlobalSettings, LogLine, LogSource, ModItem, PortCheckResult,
+        ServerInstance, ServerLogKind, ServerStatus,
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -311,15 +314,25 @@ impl AppRuntime {
             last_error: None,
         };
 
+        let config = normalize_required_rcon_config(config_from_payload(&payload, &instance))?;
+        let mods = sanitize_imported_mods(&payload);
+        let applied_config = ark_config::apply_instance_config(&instance, &config, &mods)?;
+
         {
             let mut data = self.lock()?;
-            data.configs
-                .insert(id.clone(), config_from_payload(&payload, &instance));
-            data.mods
-                .insert(id.clone(), sanitize_imported_mods(&payload));
+            data.configs.insert(id.clone(), config);
+            data.mods.insert(id.clone(), mods);
             data.instances.push(instance.clone());
         }
-        self.add_log(&instance.name, "success", "已创建服务器实例")?;
+        self.add_log(
+            &instance.name,
+            "success",
+            &format!(
+                "已创建服务器实例，初始 ARK 配置已写入：{}、{}",
+                applied_config.game_user_settings_path.to_string_lossy(),
+                applied_config.game_ini_path.to_string_lossy()
+            ),
+        )?;
         self.persist()?;
         Ok(instance)
     }
@@ -704,6 +717,30 @@ fn default_config_from_payload(payload: &AddInstancePayload, instance: &ServerIn
     map.insert("crossTransfer".to_string(), json!(true));
     map.insert("maxPlayers".to_string(), json!(payload.max_players));
     map.insert("pve".to_string(), json!(payload.mode == "PvE"));
+    map.insert("hardcore".to_string(), json!(false));
+    map.insert("disableFriendlyFire".to_string(), json!(false));
+    map.insert("enablePvPGamma".to_string(), json!(true));
+    map.insert("allowHitMarkers".to_string(), json!(true));
+    map.insert("difficulty".to_string(), json!(5));
+    map.insert("xpMultiplier".to_string(), json!(1.5));
+    map.insert("tamingSpeed".to_string(), json!(3));
+    map.insert("harvestAmount".to_string(), json!(2));
+    map.insert("harvestHealthMultiplier".to_string(), json!(1));
+    map.insert("playerDamageMultiplier".to_string(), json!(1));
+    map.insert("playerResistanceMultiplier".to_string(), json!(1));
+    map.insert("dinoDamageMultiplier".to_string(), json!(1));
+    map.insert("dinoResistanceMultiplier".to_string(), json!(1));
+    map.insert("tamedDinoDamageMultiplier".to_string(), json!(1));
+    map.insert("tamedDinoResistanceMultiplier".to_string(), json!(1));
+    map.insert("playerFoodDrainMultiplier".to_string(), json!(1));
+    map.insert("playerWaterDrainMultiplier".to_string(), json!(1));
+    map.insert("playerStaminaDrainMultiplier".to_string(), json!(1));
+    map.insert("dinoFoodDrainMultiplier".to_string(), json!(1));
+    map.insert("dinoStaminaDrainMultiplier".to_string(), json!(1));
+    map.insert("thirdPerson".to_string(), json!(true));
+    map.insert("crosshair".to_string(), json!(true));
+    map.insert("showMapPlayer".to_string(), json!(true));
+    map.insert("flyerCarry".to_string(), json!(true));
     map.insert("autoRestart".to_string(), json!(true));
     map.insert("restartTime".to_string(), json!("04:00"));
     map.insert("saveInterval".to_string(), json!(15));
@@ -712,14 +749,145 @@ fn default_config_from_payload(payload: &AddInstancePayload, instance: &ServerIn
     map.insert("autoUpdateMods".to_string(), json!(true));
     map.insert("restartOnCrash".to_string(), json!(true));
     map.insert("saveOnStop".to_string(), json!(true));
+    map.insert("dayCycleSpeed".to_string(), json!(1));
+    map.insert("dayTimeSpeed".to_string(), json!(1));
+    map.insert("nightTimeSpeed".to_string(), json!(1.5));
+    map.insert("resourceRespawn".to_string(), json!(0.7));
+    map.insert("resourceNoReplenishRadiusPlayers".to_string(), json!(1));
+    map.insert("resourceNoReplenishRadiusStructures".to_string(), json!(1));
+    map.insert("dinoCount".to_string(), json!(1));
+    map.insert("maxTamedDinos".to_string(), json!(5000));
+    map.insert("destroyWildDinos".to_string(), json!(false));
+    map.insert("cropGrowthSpeedMultiplier".to_string(), json!(1));
+    map.insert("cropDecaySpeedMultiplier".to_string(), json!(1));
+    map.insert("supplyCrateLootQualityMultiplier".to_string(), json!(1));
+    map.insert("fishingLootQualityMultiplier".to_string(), json!(1));
+    map.insert("fuelConsumptionIntervalMultiplier".to_string(), json!(1));
+    map.insert("itemStackSizeMultiplier".to_string(), json!(1));
+    map.insert("globalSpoilingTimeMultiplier".to_string(), json!(1));
+    map.insert(
+        "globalItemDecompositionTimeMultiplier".to_string(),
+        json!(1),
+    );
+    map.insert(
+        "globalCorpseDecompositionTimeMultiplier".to_string(),
+        json!(1),
+    );
+    map.insert("matingInterval".to_string(), json!(0.25));
+    map.insert("matingSpeedMultiplier".to_string(), json!(1));
+    map.insert("eggHatchSpeed".to_string(), json!(10));
+    map.insert("babyMatureSpeed".to_string(), json!(20));
+    map.insert("cuddleInterval".to_string(), json!(0.1));
+    map.insert("babyFoodConsumption".to_string(), json!(0.5));
+    map.insert("layEggIntervalMultiplier".to_string(), json!(1));
+    map.insert("babyCuddleGracePeriodMultiplier".to_string(), json!(1));
+    map.insert(
+        "babyCuddleLoseImprintQualitySpeedMultiplier".to_string(),
+        json!(1),
+    );
+    map.insert("babyImprintingStatScaleMultiplier".to_string(), json!(1));
+    map.insert("babyImprintAmountMultiplier".to_string(), json!(1));
+    map.insert("allowAnyoneBabyImprintCuddle".to_string(), json!(false));
+    map.insert("structureLimit".to_string(), json!(10500));
+    map.insert("platformStructureMultiplier".to_string(), json!(1.5));
+    map.insert("disablePlacementCollision".to_string(), json!(true));
+    map.insert("maxTribeSize".to_string(), json!(8));
+    map.insert("tribeAlliances".to_string(), json!(true));
+    map.insert("pveStructureDecay".to_string(), json!(false));
+    map.insert("allowCaveBuildingPvE".to_string(), json!(false));
+    map.insert("allowCaveBuildingPvP".to_string(), json!(true));
+    map.insert("structureDamageRepairCooldown".to_string(), json!(180));
+    map.insert("structurePickupTimeAfterPlacement".to_string(), json!(30));
+    map.insert("structurePickupHoldDuration".to_string(), json!(0.5));
+    map.insert("autoDestroyOldStructuresMultiplier".to_string(), json!(1));
+    map.insert("fastDecayUnsnappedCoreStructures".to_string(), json!(false));
+    map.insert("limitGeneratorsNum".to_string(), json!(3));
+    map.insert("limitGeneratorsRange".to_string(), json!(15000));
+    map.insert("allowCryoFridgeOnSaddle".to_string(), json!(false));
+    map.insert("disableCryopodEnemyCheck".to_string(), json!(false));
+    map.insert("disableCryopodFridgeRequirement".to_string(), json!(false));
+    map.insert("disableCryopodCooldown".to_string(), json!(false));
+    map.insert("allowFlyerSpeedLeveling".to_string(), json!(false));
+    map.insert("forceAllowCaveFlyers".to_string(), json!(false));
+    map.insert("allowFlyingStaminaRecovery".to_string(), json!(false));
+    map.insert("raidDinoFoodDrainMultiplier".to_string(), json!(1));
+    map.insert("whitelist".to_string(), json!(false));
+    map.insert("exclusiveJoin".to_string(), json!(false));
+    map.insert("preventDownloadItems".to_string(), json!(false));
+    map.insert("preventDownloadDinos".to_string(), json!(false));
+    map.insert("preventDownloadSurvivors".to_string(), json!(false));
+    map.insert("preventUploadItems".to_string(), json!(false));
+    map.insert("preventUploadDinos".to_string(), json!(false));
+    map.insert("preventUploadSurvivors".to_string(), json!(false));
+    map.insert("noTributeDownloads".to_string(), json!(false));
+    map.insert("minimumDinoReuploadInterval".to_string(), json!(0));
+    map.insert("tributeCharacterExpirationSeconds".to_string(), json!(0));
+    map.insert("tributeDinoExpirationSeconds".to_string(), json!(0));
+    map.insert("tributeItemExpirationSeconds".to_string(), json!(0));
     map.insert("useAllCores".to_string(), json!(true));
     map.insert("noBattlEye".to_string(), json!(true));
+    map.insert("noTransferFromFiltering".to_string(), json!(true));
+    map.insert("enableIdlePlayerKick".to_string(), json!(false));
+    map.insert("kickIdlePlayersPeriod".to_string(), json!(3600));
+    map.insert("enableDiseases".to_string(), json!(true));
+    map.insert("nonPermanentDiseases".to_string(), json!(false));
+    map.insert("tribeNameChangeCooldown".to_string(), json!(15));
+    map.insert("maxAlliancesPerTribe".to_string(), json!(0));
+    map.insert("maxTribesPerAlliance".to_string(), json!(0));
+    map.insert("processPriority".to_string(), json!("aboveNormal"));
+    map.insert("cpuAffinity".to_string(), json!("自动"));
+    map.insert("memoryWarningGb".to_string(), json!(24));
+    map.insert("networkTickRate".to_string(), json!(30));
+    map.insert("maxClientRate".to_string(), json!(100000));
+    map.insert("rconBufferSize".to_string(), json!(6000));
+    map.insert("compressBackups".to_string(), json!(true));
+    map.insert("snapshotBeforeRestart".to_string(), json!(true));
+    map.insert("preventHibernation".to_string(), json!(false));
+    map.insert("stasisKeepControllers".to_string(), json!(false));
+    map.insert("useStructureStasisGrid".to_string(), json!(true));
+    map.insert(
+        "alwaysTickDedicatedSkeletalMeshes".to_string(),
+        json!(false),
+    );
+    map.insert("gbUsageToForceRestart".to_string(), json!(35));
     map.insert("serverPlatform".to_string(), json!("ALL"));
+    map.insert("activeEvent".to_string(), json!(""));
+    map.insert("useDynamicConfig".to_string(), json!(false));
+    map.insert("customDynamicConfigUrl".to_string(), json!(""));
     map.insert(
         "clusterDirOverride".to_string(),
         json!("ShooterGame/Saved/clusters"),
     );
     map.insert("customLaunchArgs".to_string(), json!("-culture=zh"));
+    map.insert("serverGameLog".to_string(), json!(true));
+    map.insert("serverGameLogIncludeTribe".to_string(), json!(true));
+    map.insert("adminLogging".to_string(), json!(true));
+    map.insert("chatLogging".to_string(), json!(true));
+    map.insert("logTimestamp".to_string(), json!(true));
+    map.insert("logLevel".to_string(), json!("normal"));
+    map.insert("rotateSizeMb".to_string(), json!(100));
+    map.insert("logRetentionDays".to_string(), json!(14));
+    map.insert("logPath".to_string(), json!("ShooterGame/Saved/Logs"));
+    map.insert(
+        "crossArkAllowForeignDinoDownloads".to_string(),
+        json!(false),
+    );
+    map.insert("limitBunkersPerTribe".to_string(), json!(true));
+    map.insert("limitBunkersPerTribeNum".to_string(), json!(3));
+    map.insert("allowBunkersInPreventionZones".to_string(), json!(false));
+    map.insert("allowRidingDinosInsideBunkers".to_string(), json!(true));
+    map.insert("allowBunkerModulesAboveGround".to_string(), json!(false));
+    map.insert("allowDinoAIInsideBunkers".to_string(), json!(true));
+    map.insert(
+        "allowBunkerModulesInPreventionZones".to_string(),
+        json!(false),
+    );
+    map.insert("minDistanceBetweenBunkers".to_string(), json!(3000));
+    map.insert("enemyAccessBunkerHPThreshold".to_string(), json!(0.25));
+    map.insert(
+        "bunkerUnderHPThresholdDmgMultiplier".to_string(),
+        json!(0.05),
+    );
     Value::Object(map)
 }
 
@@ -815,6 +983,99 @@ mod tests {
             processes: Arc::new(Mutex::new(HashMap::new())),
             update_cancels: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn available_test_ports() -> (u16, u16, u16) {
+        let mut ports = Vec::new();
+        while ports.len() < 3 {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).expect("获取可用测试端口");
+            let port = listener.local_addr().expect("读取测试端口").port();
+            drop(listener);
+
+            if !ports.contains(&port) && system_port_unavailable_reason(port).is_none() {
+                ports.push(port);
+            }
+        }
+        (ports[0], ports[1], ports[2])
+    }
+
+    fn test_payload(install_path: &Path) -> AddInstancePayload {
+        let (game_port, query_port, rcon_port) = available_test_ports();
+        AddInstancePayload {
+            id: None,
+            name: "新增实例".to_string(),
+            map: "The Island".to_string(),
+            map_code: "TheIsland_WP".to_string(),
+            mode: "PvE".to_string(),
+            status: None,
+            game_port,
+            query_port,
+            players: None,
+            max_players: 42,
+            install_path: install_path.to_string_lossy().into_owned(),
+            rcon_port,
+            cluster_id: "Cluster-A".to_string(),
+            server_password: "join-pass".to_string(),
+            admin_password: "admin-pass".to_string(),
+            auto_install: false,
+            description: "用于验证新增即写入配置".to_string(),
+            imported_config: None,
+            imported_mods: None,
+        }
+    }
+
+    #[test]
+    fn 新增实例会立即写入默认_ark_ini() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let install_path = temp.path().join("未安装实例");
+        let runtime = test_runtime(temp.path());
+        let payload = test_payload(&install_path);
+        let game_port = payload.game_port;
+        let query_port = payload.query_port;
+        let rcon_port = payload.rcon_port;
+
+        let instance = runtime.create_instance(payload).expect("创建实例");
+
+        let config_dir = install_path
+            .join("ShooterGame")
+            .join("Saved")
+            .join("Config")
+            .join("WindowsServer");
+        let game_user_settings_path = config_dir.join("GameUserSettings.ini");
+        let game_ini_path = config_dir.join("Game.ini");
+        assert!(game_user_settings_path.is_file());
+        assert!(game_ini_path.is_file());
+
+        let game_user_settings =
+            fs::read_to_string(game_user_settings_path).expect("读取 GameUserSettings.ini");
+        assert!(game_user_settings.contains("SessionName=新增实例"));
+        assert!(game_user_settings.contains("ServerPassword=join-pass"));
+        assert!(game_user_settings.contains("ServerAdminPassword=admin-pass"));
+        assert!(game_user_settings.contains(&format!("Port={game_port}")));
+        assert!(game_user_settings.contains(&format!("QueryPort={query_port}")));
+        assert!(game_user_settings.contains(&format!("RCONPort={rcon_port}")));
+        assert!(game_user_settings.contains("MaxPlayers=42"));
+        assert!(game_user_settings.contains("XPMultiplier=1.5"));
+        assert!(game_user_settings.contains("TamingSpeedMultiplier=3"));
+        assert!(game_user_settings.contains("NightTimeSpeedScale=1.5"));
+
+        let game_ini = fs::read_to_string(game_ini_path).expect("读取 Game.ini");
+        assert!(game_ini.contains("MatingIntervalMultiplier=0.25"));
+        assert!(game_ini.contains("BabyMatureSpeedMultiplier=20"));
+        assert!(game_ini.contains("bDisableStructurePlacementCollision=True"));
+        assert!(game_ini.contains("LimitBunkersPerTribe=True"));
+
+        let stored_config = runtime.get_config(&instance.id).expect("读取实例配置");
+        assert_eq!(
+            stored_config.get("xpMultiplier").and_then(Value::as_f64),
+            Some(1.5)
+        );
+        assert_eq!(
+            stored_config
+                .get("disablePlacementCollision")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
     }
 
     #[test]
