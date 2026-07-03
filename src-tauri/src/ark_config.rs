@@ -235,10 +235,7 @@ fn render_game_user_settings(
             "SpectatorPassword={}",
             text(config, "spectatorPassword", "")
         ),
-        format!(
-            "RCONEnabled={}",
-            ini_bool(bool_value(config, "rconEnabled", true))
-        ),
+        "RCONEnabled=True".to_string(),
         format!(
             "RCONPort={}",
             number_u16(config, "rconPort", instance.rcon_port)

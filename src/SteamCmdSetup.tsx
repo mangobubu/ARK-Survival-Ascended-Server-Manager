@@ -203,7 +203,7 @@ export default function SteamCmdSetup({ settings, onSettingsChange }: SteamCmdSe
         width={620}
         open={guideOpen}
         closable={!installing}
-        maskClosable={false}
+        mask={{ closable: false }}
         keyboard={!installing}
         onCancel={() => !installing && setGuideOpen(false)}
         footer={modalFooter}

@@ -1,4 +1,4 @@
-export type ServerStatus = 'running' | 'stopped' | 'starting' | 'updating' | 'backingUp' | 'error'
+export type ServerStatus = 'running' | 'stopped' | 'stopping' | 'starting' | 'updating' | 'backingUp' | 'error'
 
 export interface GlobalSettings {
   steamCmdPath: string
@@ -71,6 +71,8 @@ export interface AddInstancePayload {
   adminPassword: string
   autoInstall: boolean
   description: string
+  importedConfig?: Partial<ServerConfig>
+  importedMods?: ModItem[]
 }
 
 export type InstancePortKind = 'gamePort' | 'queryPort' | 'rconPort'
@@ -100,6 +102,8 @@ export interface ModItem {
 export interface LogLine {
   id: number
   time: string
+  source: 'application' | 'server'
+  serverLogKind?: 'console' | 'file' | null
   instance: string
   level: 'info' | 'success' | 'warn' | 'error'
   message: string
@@ -296,4 +300,23 @@ export interface ServerConfig {
   minDistanceBetweenBunkers: number
   enemyAccessBunkerHPThreshold: number
   bunkerUnderHPThresholdDmgMultiplier: number
+}
+
+export interface ImportedServerConfigPreview {
+  installPath: string
+  name: string | null
+  map: string | null
+  mapCode: string | null
+  mode: 'PvE' | 'PvP' | null
+  gamePort: number | null
+  queryPort: number | null
+  rconPort: number | null
+  maxPlayers: number | null
+  clusterId: string | null
+  serverPassword: string | null
+  adminPassword: string | null
+  config: Partial<ServerConfig>
+  mods: ModItem[]
+  foundFiles: string[]
+  warnings: string[]
 }

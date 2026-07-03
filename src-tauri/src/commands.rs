@@ -1,47 +1,71 @@
 use crate::{
-    app_state::{AppRuntime, now_millis},
-    ark_config, backup, import_export,
+    app_state::{AppRuntime, normalize_required_rcon_config, now_millis},
+    ark_config, backup, import_export, instance_config_import,
     models::{
         ASA_DEDICATED_SERVER_APP_ID, AddInstancePayload, BackupItem, ExportResult, GlobalSettings,
-        ImportResult, JobProgress, LogLine, ModItem, PortCheckResult, ServerInstance, ServerStatus,
+        ImportResult, ImportedServerConfigPreview, JobProgress, LogLine, LogSource, ModItem,
+        PortCheckResult, ServerInstance, ServerLogKind, ServerStatus,
     },
     rcon,
 };
 use serde_json::Value;
 use std::{
     collections::VecDeque,
+    io::SeekFrom,
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{ExitStatus, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, State, ipc::Channel};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader},
+    io::{AsyncRead, AsyncReadExt, AsyncSeekExt},
     process::Command,
     task::JoinHandle,
-    time::{MissedTickBehavior, interval, timeout},
+    time::{MissedTickBehavior, interval, sleep, timeout},
 };
 
 #[cfg(windows)]
 use windows_sys::Win32::{
-    Foundation::CloseHandle,
+    Foundation::{CloseHandle, HWND, LPARAM},
     System::Threading::{
         GetProcessIoCounters, IO_COUNTERS, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    },
+    UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowThreadProcessId, IsWindowVisible, SW_HIDE, ShowWindow,
     },
 };
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(windows)]
+const DETACHED_PROCESS: u32 = 0x0000_0008;
+#[cfg(windows)]
+const ASA_SERVER_HIDDEN_CREATION_FLAGS: u32 = CREATE_NO_WINDOW | DETACHED_PROCESS;
+#[cfg(windows)]
+const ASA_SERVER_WINDOW_HIDE_ATTEMPTS: usize = 20;
+#[cfg(windows)]
+const ASA_SERVER_WINDOW_HIDE_INTERVAL: Duration = Duration::from_millis(250);
 const UPDATE_CANCELLED_MESSAGE: &str = "服务端安装/更新已取消";
+const SERVER_LOG_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const SERVER_LOG_DEDUPE_WINDOW: Duration = Duration::from_millis(1_500);
+const SERVER_LOG_DEDUPE_LIMIT: usize = 256;
+const SERVER_LOG_INITIAL_BACKFILL_LIMIT: u64 = 512 * 1024;
+const SERVER_STARTUP_PROBE_INTERVAL: Duration = Duration::from_secs(3);
+const SERVER_STARTUP_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const SERVER_STARTUP_PROBE_LOG_INTERVAL: Duration = Duration::from_secs(30);
+
+type SharedServerLogDeduper = Arc<Mutex<VecDeque<(Instant, String)>>>;
 
 #[derive(Clone)]
 struct SteamCmdProgressSink {
     app: AppHandle,
+    runtime: AppRuntime,
     channel: Channel<JobProgress>,
     instance_id: String,
+    instance_name: String,
     tracker: Arc<Mutex<SteamCmdProgressTracker>>,
 }
 
@@ -53,6 +77,8 @@ struct SteamCmdProgressTracker {
     percent: Option<f64>,
     last_sample: Option<(Instant, u64)>,
     last_emit_at: Option<Instant>,
+    last_log_phase: Option<String>,
+    last_log_percent_bucket: Option<u8>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -134,6 +160,11 @@ pub fn create_instance(
 }
 
 #[tauri::command]
+pub fn read_server_directory_config(path: String) -> Result<ImportedServerConfigPreview, String> {
+    instance_config_import::read_server_directory_config(Path::new(&path))
+}
+
+#[tauri::command]
 pub fn get_instance_config(
     runtime: State<'_, AppRuntime>,
     instance_id: String,
@@ -157,6 +188,7 @@ pub fn save_instance_config(
     mods: Vec<ModItem>,
 ) -> Result<(), String> {
     let instance = runtime.get_instance(&instance_id)?;
+    let config = normalize_required_rcon_config(config)?;
     runtime.save_config_and_mods(&instance_id, config.clone(), mods.clone())?;
     let applied = ark_config::apply_instance_config(&instance, &config, &mods)?;
     runtime.add_log(
@@ -264,14 +296,14 @@ pub async fn install_or_update_instance(
         "开始安装/更新服务端文件",
     )?;
 
-    let output = run_steamcmd_update(
+    let output = run_steamcmd_update_with_retry(
         &app,
         &runtime,
         &steamcmd,
         Path::new(&instance.install_path),
         &progress,
         &instance,
-        update_cancel,
+        Arc::clone(&update_cancel),
     )
     .await;
     runtime.finish_update(&instance.id);
@@ -340,7 +372,7 @@ pub async fn stop_instance(
     instance_id: String,
 ) -> Result<ServerInstance, String> {
     let runtime = runtime.inner().clone();
-    stop_instance_inner(app, runtime, instance_id).await
+    stop_instance_inner(app, runtime, instance_id)
 }
 
 #[tauri::command]
@@ -374,6 +406,16 @@ pub fn query_logs(
 #[tauri::command]
 pub fn clear_logs(runtime: State<'_, AppRuntime>) -> Result<(), String> {
     runtime.clear_logs()
+}
+
+#[tauri::command]
+pub fn clear_scoped_logs(
+    runtime: State<'_, AppRuntime>,
+    source: LogSource,
+    instance: Option<String>,
+    server_log_kind: Option<ServerLogKind>,
+) -> Result<(), String> {
+    runtime.clear_logs_by_scope(source, instance.as_deref(), server_log_kind)
 }
 
 #[tauri::command]
@@ -441,6 +483,14 @@ pub fn import_instance_config(
 }
 
 #[tauri::command]
+pub fn delete_instance(
+    runtime: State<'_, AppRuntime>,
+    instance_id: String,
+) -> Result<ServerInstance, String> {
+    runtime.delete_instance(&instance_id)
+}
+
+#[tauri::command]
 pub fn open_instance_directory(
     runtime: State<'_, AppRuntime>,
     instance_id: String,
@@ -453,6 +503,18 @@ pub fn open_instance_directory(
     open_directory(path)
 }
 
+#[tauri::command]
+pub fn open_directory_path(path: String) -> Result<(), String> {
+    let path = Path::new(&path);
+    if !path.exists() {
+        return Err(format!("目录不存在：{}", path.display()));
+    }
+    if !path.is_dir() {
+        return Err(format!("不是可打开的目录：{}", path.display()));
+    }
+    open_directory(path)
+}
+
 fn save_config_for_runtime(
     runtime: &AppRuntime,
     instance_id: &str,
@@ -460,6 +522,7 @@ fn save_config_for_runtime(
     mods: Vec<ModItem>,
 ) -> Result<(), String> {
     let instance = runtime.get_instance(instance_id)?;
+    let config = normalize_required_rcon_config(config)?;
     runtime.save_config_and_mods(instance_id, config.clone(), mods.clone())?;
     let applied = ark_config::apply_instance_config(&instance, &config, &mods)?;
     runtime.add_log(
@@ -474,6 +537,115 @@ fn save_config_for_runtime(
         ),
     )?;
     Ok(())
+}
+
+#[cfg(windows)]
+fn configure_asa_server_hidden_process(command: &mut Command) {
+    command.creation_flags(ASA_SERVER_HIDDEN_CREATION_FLAGS);
+}
+
+#[cfg(not(windows))]
+fn configure_asa_server_hidden_process(_command: &mut Command) {}
+
+#[cfg(windows)]
+fn hide_asa_server_windows_after_spawn(pid: u32) {
+    tokio::spawn(async move {
+        for _ in 0..ASA_SERVER_WINDOW_HIDE_ATTEMPTS {
+            hide_windows_for_process(pid);
+            sleep(ASA_SERVER_WINDOW_HIDE_INTERVAL).await;
+        }
+    });
+}
+
+#[cfg(windows)]
+fn hide_windows_for_process(pid: u32) -> bool {
+    struct WindowSearch {
+        pid: u32,
+        hidden_any: bool,
+    }
+
+    unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> windows_sys::core::BOOL {
+        if lparam == 0 {
+            return 1;
+        }
+
+        let state = unsafe { &mut *(lparam as *mut WindowSearch) };
+        let mut window_pid = 0_u32;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, &mut window_pid);
+        }
+
+        if window_pid == state.pid && unsafe { IsWindowVisible(hwnd) } != 0 {
+            unsafe {
+                ShowWindow(hwnd, SW_HIDE);
+            }
+            state.hidden_any = true;
+        }
+
+        1
+    }
+
+    let mut state = WindowSearch {
+        pid,
+        hidden_any: false,
+    };
+
+    unsafe {
+        EnumWindows(Some(enum_window), &mut state as *mut WindowSearch as LPARAM);
+    }
+
+    state.hidden_any
+}
+
+async fn run_steamcmd_update_with_retry(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    steamcmd: &Path,
+    install_path: &Path,
+    progress: &Channel<JobProgress>,
+    instance: &ServerInstance,
+    cancel: Arc<AtomicBool>,
+) -> Result<String, String> {
+    let mut attempted_retry = false;
+
+    loop {
+        let result = run_steamcmd_update(
+            app,
+            runtime,
+            steamcmd,
+            install_path,
+            progress,
+            instance,
+            Arc::clone(&cancel),
+        )
+        .await;
+
+        match result {
+            Err(error) if !attempted_retry && is_retryable_steamcmd_configuration_error(&error) => {
+                attempted_retry = true;
+                emit_instance_log(
+                    app,
+                    runtime,
+                    &instance.name,
+                    "warn",
+                    "SteamCMD 配置尚未就绪，正在等待后自动重试安装/更新",
+                )?;
+                emit_progress(
+                    progress,
+                    &instance.id,
+                    "preparing",
+                    Some(8.0),
+                    "SteamCMD 配置刷新后准备重试安装/更新",
+                    Some(error),
+                )?;
+                sleep(Duration::from_secs(2)).await;
+                if cancel.load(Ordering::SeqCst) {
+                    return Err(UPDATE_CANCELLED_MESSAGE.to_string());
+                }
+            }
+            other => return other,
+        }
+    }
 }
 
 async fn run_steamcmd_update(
@@ -506,8 +678,12 @@ async fn run_steamcmd_update(
         ),
     )?;
 
+    let steamcmd_dir = steamcmd
+        .parent()
+        .ok_or_else(|| format!("无法定位 SteamCMD 工作目录：{}", steamcmd.display()))?;
     let mut command = Command::new(steamcmd);
     command
+        .current_dir(steamcmd_dir)
         .arg("+force_install_dir")
         .arg(install_path)
         .arg("+login")
@@ -535,8 +711,10 @@ async fn run_steamcmd_update(
         let output_tail = Arc::new(Mutex::new(VecDeque::with_capacity(24)));
         let progress_sink = SteamCmdProgressSink {
             app: app.clone(),
+            runtime: runtime.clone(),
             channel: progress.clone(),
             instance_id: instance.id.clone(),
+            instance_name: instance.name.clone(),
             tracker: Arc::new(Mutex::new(SteamCmdProgressTracker::default())),
         };
         let child_pid = child.id();
@@ -648,7 +826,7 @@ async fn start_instance_inner(
     if instance.status == ServerStatus::Running {
         return Ok(instance);
     }
-    let config = runtime.get_config(&instance_id)?;
+    let config = normalize_required_rcon_config(runtime.get_config(&instance_id)?)?;
     let mods = runtime.get_mods(&instance_id)?;
     save_config_for_runtime(&runtime, &instance_id, config.clone(), mods.clone())?;
     let executable = ark_config::server_executable(&instance).ok_or_else(|| {
@@ -675,42 +853,131 @@ async fn start_instance_inner(
         .stderr(Stdio::piped())
         .kill_on_drop(false);
 
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
+    configure_asa_server_hidden_process(&mut command);
 
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("启动 ASA 服务端失败：{error}"))?;
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let error = format!("启动 ASA 服务端失败：{error}");
+            let _ = runtime.update_instance_status(
+                &instance_id,
+                ServerStatus::Error,
+                Some(error.clone()),
+            );
+            let _ = emit_status(&app, &runtime, &instance_id);
+            return Err(error);
+        }
+    };
     let pid = child.id();
-    attach_process_log_reader(&app, &runtime, &instance, child.stdout.take(), "info");
-    attach_process_log_reader(&app, &runtime, &instance, child.stderr.take(), "error");
+    #[cfg(windows)]
+    if let Some(pid) = pid {
+        hide_asa_server_windows_after_spawn(pid);
+    }
+    let server_log_deduper = Arc::new(Mutex::new(VecDeque::with_capacity(SERVER_LOG_DEDUPE_LIMIT)));
+    attach_process_log_reader(
+        &app,
+        &runtime,
+        &instance,
+        child.stdout.take(),
+        "info",
+        server_log_deduper.clone(),
+    );
+    attach_process_log_reader(
+        &app,
+        &runtime,
+        &instance,
+        child.stderr.take(),
+        "error",
+        server_log_deduper.clone(),
+    );
 
     {
         let mut processes = runtime.lock_processes()?;
         processes.insert(instance_id.clone(), child);
     }
+    attach_server_log_file_reader(&app, &runtime, &instance, server_log_deduper);
 
     runtime.add_log(
         &instance.name,
         "success",
         &format!("实例启动命令已执行，PID：{}", pid.unwrap_or_default()),
     )?;
-    let updated = runtime.set_instance_pid(&instance_id, pid, ServerStatus::Running)?;
+    let updated = runtime.set_instance_pid(&instance_id, pid, ServerStatus::Starting)?;
     emit_status(&app, &runtime, &instance_id)?;
+    tokio::spawn(monitor_startup_readiness(
+        app.clone(),
+        runtime.clone(),
+        instance_id.clone(),
+        Instant::now(),
+    ));
     Ok(updated)
 }
 
-async fn stop_instance_inner(
+fn stop_instance_inner(
     app: AppHandle,
     runtime: AppRuntime,
     instance_id: String,
 ) -> Result<ServerInstance, String> {
     let instance = runtime.get_instance(&instance_id)?;
-    let config = runtime.get_config(&instance_id)?;
     if instance.status == ServerStatus::Stopped {
         return Ok(instance);
     }
-    if instance.status == ServerStatus::Updating {
+    if instance.status == ServerStatus::Stopping {
+        return Ok(instance);
+    }
+
+    let stop_from_status = instance.status.clone();
+    let updated = runtime.update_instance_status(&instance_id, ServerStatus::Stopping, None)?;
+    let _ = runtime.add_log(&instance.name, "warn", "停止请求已提交，后台正在停止实例");
+    let _ = emit_status(&app, &runtime, &instance_id);
+
+    let task_app = app.clone();
+    let task_runtime = runtime.clone();
+    let task_instance_id = instance_id.clone();
+    tokio::spawn(async move {
+        if let Err(error) = stop_instance_task(
+            task_app.clone(),
+            task_runtime.clone(),
+            task_instance_id.clone(),
+            stop_from_status,
+        )
+        .await
+        {
+            let fallback_name = task_instance_id.clone();
+            let instance_name = task_runtime
+                .get_instance(&task_instance_id)
+                .map(|instance| instance.name)
+                .unwrap_or(fallback_name);
+            let _ = task_runtime.update_instance_status(
+                &task_instance_id,
+                ServerStatus::Error,
+                Some(error.clone()),
+            );
+            let _ = emit_instance_log(
+                &task_app,
+                &task_runtime,
+                &instance_name,
+                "error",
+                &format!("后台停止实例失败：{error}"),
+            );
+            let _ = emit_status(&task_app, &task_runtime, &task_instance_id);
+        }
+    });
+
+    Ok(updated)
+}
+
+async fn stop_instance_task(
+    app: AppHandle,
+    runtime: AppRuntime,
+    instance_id: String,
+    stop_from_status: ServerStatus,
+) -> Result<ServerInstance, String> {
+    let instance = runtime.get_instance(&instance_id)?;
+    if stop_from_status == ServerStatus::Stopped {
+        return Ok(instance);
+    }
+    if stop_from_status == ServerStatus::Updating {
         if runtime.cancel_update(&instance_id)? {
             emit_instance_log(
                 &app,
@@ -732,6 +999,7 @@ async fn stop_instance_inner(
         return Ok(updated);
     }
 
+    let config = runtime.get_config(&instance_id)?;
     if bool_from_config(&config, "saveOnStop", true) {
         let password = config
             .get("adminPassword")
@@ -782,7 +1050,14 @@ async fn restart_instance_inner(
     runtime: AppRuntime,
     instance_id: String,
 ) -> Result<ServerInstance, String> {
-    stop_instance_inner(app.clone(), runtime.clone(), instance_id.clone()).await?;
+    let stop_from_status = runtime.get_instance(&instance_id)?.status;
+    stop_instance_task(
+        app.clone(),
+        runtime.clone(),
+        instance_id.clone(),
+        stop_from_status,
+    )
+    .await?;
     start_instance_inner(app, runtime, instance_id).await
 }
 
@@ -791,38 +1066,209 @@ async fn refresh_status_inner(
     runtime: &AppRuntime,
     instance_id: &str,
 ) -> Result<ServerInstance, String> {
-    let exited = {
+    if let Some(exit_status) = take_exited_instance_process(runtime, instance_id)? {
+        return apply_exited_instance_status(app, runtime, instance_id, exit_status);
+    }
+    runtime.get_instance(instance_id)
+}
+
+async fn monitor_startup_readiness(
+    app: AppHandle,
+    runtime: AppRuntime,
+    instance_id: String,
+    started_at: Instant,
+) {
+    let mut ticker = interval(SERVER_STARTUP_PROBE_INTERVAL);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut last_probe_error_log_at: Option<Instant> = None;
+    let mut timeout_reported = false;
+
+    loop {
+        ticker.tick().await;
+
+        let instance = match runtime.get_instance(&instance_id) {
+            Ok(instance) => instance,
+            Err(_) => break,
+        };
+        if instance.status != ServerStatus::Starting {
+            break;
+        }
+
+        match take_exited_instance_process(&runtime, &instance_id) {
+            Ok(Some(exit_status)) => {
+                let _ = apply_exited_instance_status(&app, &runtime, &instance_id, exit_status);
+                break;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = emit_instance_log(
+                    &app,
+                    &runtime,
+                    &instance.name,
+                    "error",
+                    &format!("检查启动进程状态失败：{error}"),
+                );
+                break;
+            }
+        }
+
+        let config = match runtime.get_config(&instance_id) {
+            Ok(config) => config,
+            Err(error) => {
+                let _ = emit_instance_log(
+                    &app,
+                    &runtime,
+                    &instance.name,
+                    "error",
+                    &format!("读取启动探测配置失败：{error}"),
+                );
+                break;
+            }
+        };
+
+        match probe_server_readiness(&instance, &config).await {
+            Ok(method) => {
+                let _ = emit_instance_log(
+                    &app,
+                    &runtime,
+                    &instance.name,
+                    "success",
+                    &format!("启动探测通过：{method}，实例已进入运行中"),
+                );
+                match runtime.set_instance_pid(&instance_id, instance.pid, ServerStatus::Running) {
+                    Ok(_) => {
+                        let _ = emit_status(&app, &runtime, &instance_id);
+                    }
+                    Err(error) => {
+                        let _ = emit_instance_log(
+                            &app,
+                            &runtime,
+                            &instance.name,
+                            "error",
+                            &format!("更新运行状态失败：{error}"),
+                        );
+                    }
+                }
+                break;
+            }
+            Err(error) => {
+                if last_probe_error_log_at
+                    .map(|last| last.elapsed() >= SERVER_STARTUP_PROBE_LOG_INTERVAL)
+                    .unwrap_or(true)
+                {
+                    let _ = emit_instance_log(
+                        &app,
+                        &runtime,
+                        &instance.name,
+                        "info",
+                        &format!("启动探测未就绪：{error}"),
+                    );
+                    last_probe_error_log_at = Some(Instant::now());
+                }
+
+                if !timeout_reported && started_at.elapsed() >= SERVER_STARTUP_TIMEOUT {
+                    timeout_reported = true;
+                    let message = format!(
+                        "启动探测超过 {} 分钟仍未就绪，进程仍在运行，将继续保持启动中并持续探测：{error}",
+                        SERVER_STARTUP_TIMEOUT.as_secs() / 60
+                    );
+                    let _ = runtime.update_instance_status(
+                        &instance_id,
+                        ServerStatus::Starting,
+                        Some(message.clone()),
+                    );
+                    let _ = emit_instance_log(&app, &runtime, &instance.name, "warn", &message);
+                    let _ = emit_status(&app, &runtime, &instance_id);
+                }
+            }
+        }
+    }
+}
+
+fn take_exited_instance_process(
+    runtime: &AppRuntime,
+    instance_id: &str,
+) -> Result<Option<ExitStatus>, String> {
+    let exit_status = {
         let mut processes = runtime.lock_processes()?;
         if let Some(child) = processes.get_mut(instance_id) {
             child
                 .try_wait()
                 .map_err(|error| format!("刷新进程状态失败：{error}"))?
-                .is_some()
         } else {
-            false
+            None
         }
     };
-    if exited {
-        let instance = runtime.get_instance(instance_id)?;
-        {
-            let mut processes = runtime.lock_processes()?;
-            processes.remove(instance_id);
-        }
-        runtime.add_log(&instance.name, "warn", "检测到服务端进程已退出")?;
-        let updated = runtime.set_instance_pid(instance_id, None, ServerStatus::Stopped)?;
-        emit_status(app, runtime, instance_id)?;
-        return Ok(updated);
+    if exit_status.is_some() {
+        let mut processes = runtime.lock_processes()?;
+        processes.remove(instance_id);
     }
-    runtime.get_instance(instance_id)
+    Ok(exit_status)
 }
 
-fn attach_process_log_reader(
+fn apply_exited_instance_status(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance_id: &str,
+    exit_status: ExitStatus,
+) -> Result<ServerInstance, String> {
+    let instance = runtime.get_instance(instance_id)?;
+    runtime.add_log(
+        &instance.name,
+        "warn",
+        &format!("检测到服务端进程已退出：{exit_status}"),
+    )?;
+
+    let updated = if !exit_status.success() {
+        let error = if instance.status == ServerStatus::Starting {
+            format!("服务端启动过程中退出：{exit_status}")
+        } else {
+            format!("服务端进程异常退出：{exit_status}")
+        };
+        runtime.add_log(&instance.name, "error", &error)?;
+        runtime.set_instance_pid(instance_id, None, ServerStatus::Error)?;
+        runtime.update_instance_status(instance_id, ServerStatus::Error, Some(error))?
+    } else {
+        runtime.set_instance_pid(instance_id, None, ServerStatus::Stopped)?
+    };
+    emit_status(app, runtime, instance_id)?;
+    Ok(updated)
+}
+
+async fn probe_server_readiness(
+    instance: &ServerInstance,
+    config: &Value,
+) -> Result<String, String> {
+    let rcon_enabled = bool_from_config(config, "rconEnabled", true);
+    let admin_password = config
+        .get("adminPassword")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    if !rcon_enabled {
+        return Err("RCON 未启用，无法判定服务端运行状态".to_string());
+    }
+    if admin_password.is_empty() {
+        return Err("管理员密码为空，无法执行 RCON 启动探测".to_string());
+    }
+
+    let rcon_port = u16_from_config(config, "rconPort", instance.rcon_port);
+    rcon::execute("127.0.0.1", rcon_port, admin_password, "ListPlayers")
+        .await
+        .map(|_| format!("RCON ListPlayers 127.0.0.1:{rcon_port}"))
+        .map_err(|error| format!("RCON 未就绪：{error}"))
+}
+
+fn attach_process_log_reader<R>(
     app: &AppHandle,
     runtime: &AppRuntime,
     instance: &ServerInstance,
-    stream: Option<impl tokio::io::AsyncRead + Unpin + Send + 'static>,
+    stream: Option<R>,
     level: &'static str,
-) {
+    deduper: SharedServerLogDeduper,
+) where
+    R: AsyncRead + Unpin + Send + 'static,
+{
     let Some(stream) = stream else {
         return;
     };
@@ -830,16 +1276,369 @@ fn attach_process_log_reader(
     let runtime = runtime.clone();
     let instance_name = instance.name.clone();
     tokio::spawn(async move {
-        let mut lines = BufReader::new(stream).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            if line.trim().is_empty() {
-                continue;
-            }
-            if let Ok(log_line) = runtime.add_log(&instance_name, level, &line) {
-                let _ = app.emit("asa:log-line", log_line);
+        let mut stream = stream;
+        let mut buffer = [0_u8; 4096];
+        let mut pending = Vec::new();
+
+        loop {
+            let read = match stream.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(_) => break,
+            };
+
+            for byte in &buffer[..read] {
+                if *byte == b'\r' || *byte == b'\n' {
+                    let line = String::from_utf8_lossy(&pending);
+                    handle_server_log_line(
+                        &app,
+                        &runtime,
+                        &instance_name,
+                        level,
+                        ServerLogKind::Console,
+                        &deduper,
+                        &line,
+                    );
+                    pending.clear();
+                } else {
+                    pending.push(*byte);
+                    if pending.len() > 8192 {
+                        let line = String::from_utf8_lossy(&pending);
+                        handle_server_log_line(
+                            &app,
+                            &runtime,
+                            &instance_name,
+                            level,
+                            ServerLogKind::Console,
+                            &deduper,
+                            &line,
+                        );
+                        pending.clear();
+                    }
+                }
             }
         }
+
+        if !pending.is_empty() {
+            let line = String::from_utf8_lossy(&pending);
+            handle_server_log_line(
+                &app,
+                &runtime,
+                &instance_name,
+                level,
+                ServerLogKind::Console,
+                &deduper,
+                &line,
+            );
+        }
     });
+}
+
+fn attach_server_log_file_reader(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance: &ServerInstance,
+    deduper: SharedServerLogDeduper,
+) {
+    let app = app.clone();
+    let runtime = runtime.clone();
+    let instance_id = instance.id.clone();
+    let instance_name = instance.name.clone();
+    let log_dir = ark_config::saved_dir(instance).join("Logs");
+    let watch_started_at = SystemTime::now();
+
+    tokio::spawn(async move {
+        tail_server_log_directory(
+            app,
+            runtime,
+            instance_id,
+            instance_name,
+            log_dir,
+            deduper,
+            watch_started_at,
+        )
+        .await;
+    });
+}
+
+async fn tail_server_log_directory(
+    app: AppHandle,
+    runtime: AppRuntime,
+    instance_id: String,
+    instance_name: String,
+    log_dir: PathBuf,
+    deduper: SharedServerLogDeduper,
+    watch_started_at: SystemTime,
+) {
+    let mut active_path: Option<PathBuf> = None;
+    let mut offset = 0_u64;
+    let mut pending = Vec::new();
+    let mut ticker = interval(SERVER_LOG_POLL_INTERVAL);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+    loop {
+        ticker.tick().await;
+        if !is_instance_process_tracked(&runtime, &instance_id) {
+            break;
+        }
+
+        let Some(candidate) = latest_server_log_path(&log_dir).await else {
+            continue;
+        };
+        let Ok(metadata) = tokio::fs::metadata(&candidate).await else {
+            continue;
+        };
+
+        if active_path.as_ref() != Some(&candidate) {
+            let is_rotation = active_path.is_some();
+            offset = initial_server_log_offset(&metadata, watch_started_at, is_rotation);
+            active_path = Some(candidate.clone());
+            pending.clear();
+        }
+
+        let len = metadata.len();
+        if len < offset {
+            offset = 0;
+            pending.clear();
+        }
+        if len <= offset {
+            continue;
+        }
+
+        match read_new_server_log_bytes(
+            &candidate,
+            offset,
+            &mut pending,
+            &app,
+            &runtime,
+            &instance_name,
+            &deduper,
+        )
+        .await
+        {
+            Ok(new_offset) => offset = new_offset,
+            Err(_) => {
+                active_path = None;
+                offset = 0;
+                pending.clear();
+            }
+        }
+    }
+}
+
+async fn latest_server_log_path(log_dir: &Path) -> Option<PathBuf> {
+    let mut entries = tokio::fs::read_dir(log_dir).await.ok()?;
+    let mut latest: Option<(SystemTime, PathBuf)> = None;
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if !is_server_log_candidate(&path) {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata().await else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
+        if latest
+            .as_ref()
+            .is_none_or(|(latest_modified, _)| modified > *latest_modified)
+        {
+            latest = Some((modified, path));
+        }
+    }
+
+    latest.map(|(_, path)| path)
+}
+
+fn is_server_log_candidate(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            extension.eq_ignore_ascii_case("log") || extension.eq_ignore_ascii_case("txt")
+        })
+        .unwrap_or(false)
+}
+
+fn initial_server_log_offset(
+    metadata: &std::fs::Metadata,
+    watch_started_at: SystemTime,
+    is_rotation: bool,
+) -> u64 {
+    if is_rotation {
+        return 0;
+    }
+    if metadata.len() <= SERVER_LOG_INITIAL_BACKFILL_LIMIT {
+        let threshold = watch_started_at
+            .checked_sub(Duration::from_secs(2))
+            .unwrap_or(watch_started_at);
+        if metadata
+            .modified()
+            .map(|modified| modified >= threshold)
+            .unwrap_or(false)
+        {
+            return 0;
+        }
+    }
+    metadata.len()
+}
+
+async fn read_new_server_log_bytes(
+    path: &Path,
+    offset: u64,
+    pending: &mut Vec<u8>,
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance_name: &str,
+    deduper: &SharedServerLogDeduper,
+) -> Result<u64, String> {
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|error| format!("打开服务端日志失败：{error}"))?;
+    file.seek(SeekFrom::Start(offset))
+        .await
+        .map_err(|error| format!("定位服务端日志失败：{error}"))?;
+
+    let mut current_offset = offset;
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .await
+            .map_err(|error| format!("读取服务端日志失败：{error}"))?;
+        if read == 0 {
+            break;
+        }
+        current_offset = current_offset.saturating_add(read as u64);
+        for byte in &buffer[..read] {
+            if *byte == b'\r' || *byte == b'\n' {
+                let line = String::from_utf8_lossy(pending);
+                handle_server_log_line(
+                    app,
+                    runtime,
+                    instance_name,
+                    "info",
+                    ServerLogKind::File,
+                    deduper,
+                    &line,
+                );
+                pending.clear();
+            } else {
+                pending.push(*byte);
+                if pending.len() > 8192 {
+                    let line = String::from_utf8_lossy(pending);
+                    handle_server_log_line(
+                        app,
+                        runtime,
+                        instance_name,
+                        "info",
+                        ServerLogKind::File,
+                        deduper,
+                        &line,
+                    );
+                    pending.clear();
+                }
+            }
+        }
+    }
+    Ok(current_offset)
+}
+
+fn handle_server_log_line(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance_name: &str,
+    fallback_level: &'static str,
+    server_log_kind: ServerLogKind,
+    deduper: &SharedServerLogDeduper,
+    line: &str,
+) {
+    let line = line.trim();
+    if line.is_empty() || should_skip_duplicate_server_log(deduper, line) {
+        return;
+    }
+    let level = classify_server_log_level(line, fallback_level);
+    let _ = emit_server_log(app, runtime, instance_name, level, line, server_log_kind);
+}
+
+fn classify_server_log_level(line: &str, fallback_level: &'static str) -> &'static str {
+    let normalized = line.to_ascii_lowercase();
+    if is_error_server_log(&normalized) {
+        return "error";
+    }
+    if is_warn_server_log(&normalized) {
+        return "warn";
+    }
+    if is_plain_server_log(&normalized) {
+        return "info";
+    }
+    fallback_level
+}
+
+fn is_plain_server_log(normalized: &str) -> bool {
+    normalized.contains(" i ")
+        || normalized.contains(" d ")
+        || normalized.contains(" info/")
+        || normalized.contains(" debug/")
+        || normalized.contains(" log")
+        || normalized.starts_with("none")
+        || normalized.starts_with("cfcore")
+}
+
+fn is_warn_server_log(normalized: &str) -> bool {
+    normalized.contains(" w ")
+        || normalized.contains(" warn/")
+        || normalized.contains(" warning")
+        || normalized.contains("warning:")
+        || normalized.contains("couldn't")
+        || normalized.contains("could not")
+        || normalized.contains("failed")
+        || normalized.contains("failure")
+}
+
+fn is_error_server_log(normalized: &str) -> bool {
+    normalized.contains(" error/")
+        || normalized.contains(" error:")
+        || normalized.contains(" error ")
+        || normalized.starts_with("error")
+        || normalized.contains(" fatal")
+        || normalized.starts_with("fatal")
+        || normalized.contains(" crash")
+        || normalized.starts_with("crash")
+        || normalized.contains("exception")
+}
+
+fn should_skip_duplicate_server_log(deduper: &SharedServerLogDeduper, line: &str) -> bool {
+    let now = Instant::now();
+    let Ok(mut recent_lines) = deduper.lock() else {
+        return false;
+    };
+
+    while recent_lines
+        .front()
+        .is_some_and(|(seen_at, _)| now.duration_since(*seen_at) > SERVER_LOG_DEDUPE_WINDOW)
+    {
+        recent_lines.pop_front();
+    }
+
+    if recent_lines.iter().any(|(_, seen_line)| seen_line == line) {
+        return true;
+    }
+
+    while recent_lines.len() >= SERVER_LOG_DEDUPE_LIMIT {
+        recent_lines.pop_front();
+    }
+    recent_lines.push_back((now, line.to_string()));
+    false
+}
+
+fn is_instance_process_tracked(runtime: &AppRuntime, instance_id: &str) -> bool {
+    runtime
+        .lock_processes()
+        .map(|processes| processes.contains_key(instance_id))
+        .unwrap_or(false)
 }
 
 fn emit_status(app: &AppHandle, runtime: &AppRuntime, instance_id: &str) -> Result<(), String> {
@@ -856,6 +1655,19 @@ fn emit_instance_log(
     message: &str,
 ) -> Result<(), String> {
     let line = runtime.add_log(instance_name, level, message)?;
+    app.emit("asa:log-line", line)
+        .map_err(|error| format!("发送日志事件失败：{error}"))
+}
+
+fn emit_server_log(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance_name: &str,
+    level: &str,
+    message: &str,
+    server_log_kind: ServerLogKind,
+) -> Result<(), String> {
+    let line = runtime.add_server_log_with_kind(instance_name, level, message, server_log_kind)?;
     app.emit("asa:log-line", line)
         .map_err(|error| format!("发送日志事件失败：{error}"))
 }
@@ -945,6 +1757,14 @@ fn bool_from_config(config: &Value, key: &str, fallback: bool) -> bool {
     config.get(key).and_then(Value::as_bool).unwrap_or(fallback)
 }
 
+fn u16_from_config(config: &Value, key: &str, fallback: u16) -> u16 {
+    config
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(fallback)
+}
+
 fn trim_detail(content: &str, fallback: &str) -> String {
     let detail = content
         .lines()
@@ -959,6 +1779,19 @@ fn trim_detail(content: &str, fallback: &str) -> String {
     text
 }
 
+fn is_retryable_steamcmd_configuration_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("missing configuration")
+        && (lower.contains("failed to install app") || lower.contains("app_update"))
+}
+
+fn is_steamcmd_failure_detail(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.contains("error!")
+        || lower.contains("failed to install app")
+        || lower.contains("missing configuration")
+}
+
 fn remember_tail(tail: &Arc<Mutex<VecDeque<String>>>, line: &str) {
     if let Ok(mut tail) = tail.lock() {
         if tail.len() >= 24 {
@@ -969,16 +1802,14 @@ fn remember_tail(tail: &Arc<Mutex<VecDeque<String>>>, line: &str) {
 }
 
 fn tail_detail(tail: &Arc<Mutex<VecDeque<String>>>, fallback: &str) -> String {
-    let detail = tail
-        .lock()
-        .ok()
-        .and_then(|tail| {
-            tail.iter()
-                .rev()
-                .find(|line| !line.trim().is_empty())
-                .cloned()
-        })
-        .unwrap_or_else(|| fallback.to_string());
+    let detail = tail.lock().ok().and_then(|tail| {
+        tail.iter()
+            .rev()
+            .find(|line| is_steamcmd_failure_detail(line))
+            .or_else(|| tail.iter().rev().find(|line| !line.trim().is_empty()))
+            .cloned()
+    });
+    let detail = detail.unwrap_or_else(|| fallback.to_string());
     trim_detail(&detail, fallback)
 }
 
@@ -988,9 +1819,11 @@ impl SteamCmdProgressTracker {
         downloaded_bytes: u64,
         total_bytes: Option<u64>,
         percent: Option<f64>,
+        phase: &str,
+        progress_message: &str,
         now: Instant,
         force_emit: bool,
-    ) -> (TransferSnapshot, bool) {
+    ) -> (TransferSnapshot, bool, Option<String>) {
         self.downloaded_bytes = downloaded_bytes;
         self.total_bytes = total_bytes;
         self.percent = match total_bytes {
@@ -1033,7 +1866,42 @@ impl SteamCmdProgressTracker {
             self.last_emit_at = Some(now);
         }
 
-        (self.snapshot(), should_emit)
+        let snapshot = self.snapshot();
+        let progress_log = if should_emit {
+            self.next_progress_log(phase, progress_message, &snapshot)
+        } else {
+            None
+        };
+
+        (snapshot, should_emit, progress_log)
+    }
+
+    fn next_progress_log(
+        &mut self,
+        phase: &str,
+        progress_message: &str,
+        snapshot: &TransferSnapshot,
+    ) -> Option<String> {
+        let phase_changed = self.last_log_phase.as_deref() != Some(phase);
+        let percent_bucket = snapshot
+            .percent
+            .map(|percent| (percent.clamp(0.0, 100.0) / 10.0).floor() as u8);
+        let percent_changed =
+            percent_bucket.is_some() && percent_bucket != self.last_log_percent_bucket;
+
+        if !phase_changed && !percent_changed {
+            return None;
+        }
+
+        self.last_log_phase = Some(phase.to_string());
+        if let Some(bucket) = percent_bucket {
+            self.last_log_percent_bucket = Some(bucket);
+        }
+
+        Some(match snapshot.percent {
+            Some(percent) => format!("{progress_message}：{percent:.1}%"),
+            None => progress_message.to_string(),
+        })
     }
 
     fn snapshot(&self) -> TransferSnapshot {
@@ -1332,16 +2200,28 @@ fn emit_steamcmd_transfer_progress(
     force_emit: bool,
 ) {
     let now = Instant::now();
-    let (snapshot, should_emit) = match sink.tracker.lock() {
+    let (snapshot, should_emit, progress_log) = match sink.tracker.lock() {
         Ok(mut tracker) => tracker.update(
             parsed.downloaded_bytes,
             parsed.total_bytes,
             parsed.percent,
+            &parsed.phase,
+            &parsed.message,
             now,
             force_emit,
         ),
         Err(_) => return,
     };
+
+    if let Some(message) = progress_log {
+        let _ = emit_instance_log(
+            &sink.app,
+            &sink.runtime,
+            &sink.instance_name,
+            "info",
+            &message,
+        );
+    }
 
     if should_emit {
         let payload = JobProgress {
@@ -1537,6 +2417,68 @@ mod tests {
         assert_eq!(parsed.phase, "downloading");
         assert_eq!(parsed.downloaded_bytes, 1_678_229_152);
         assert_eq!(parsed.total_bytes, Some(8_248_424_336));
+    }
+
+    #[test]
+    fn tail_detail_prefers_steamcmd_error_over_late_bootstrap_output() {
+        let tail = Arc::new(Mutex::new(VecDeque::from([
+            "ERROR! Failed to install app '2430930' (Missing configuration)".to_string(),
+            "Unloading Steam API...OK".to_string(),
+            "Redirecting stderr to 'D:\\Game\\SteamCMD\\logs\\stderr.txt'".to_string(),
+            "[----] Verifying installation...".to_string(),
+        ])));
+
+        assert_eq!(
+            tail_detail(&tail, "SteamCMD 安装/更新失败"),
+            "ERROR! Failed to install app '2430930' (Missing configuration)"
+        );
+    }
+
+    #[test]
+    fn detects_retryable_missing_configuration_error() {
+        assert!(is_retryable_steamcmd_configuration_error(
+            "ERROR! Failed to install app '2430930' (Missing configuration)"
+        ));
+        assert!(!is_retryable_steamcmd_configuration_error(
+            "SteamCMD 安装/更新失败，退出代码：exit code: 1"
+        ));
+    }
+
+    #[test]
+    fn 服务端_info_debug_日志即使来自_stderr_也显示普通级别() {
+        assert_eq!(
+            classify_server_log_level(
+                "07-03 11:09:28.015 25588 1244 I Info/GameAnalytics : Event queue: No events to send",
+                "error"
+            ),
+            "info"
+        );
+        assert_eq!(
+            classify_server_log_level(
+                "07-03 11:09:32.751 25588 1244 D Debug/GameAnalytics : body: {}",
+                "error"
+            ),
+            "info"
+        );
+    }
+
+    #[test]
+    fn 服务端警告和错误日志按内容着色() {
+        assert_eq!(
+            classify_server_log_level("CFCore : Couldn't load mods library from disk", "info"),
+            "warn"
+        );
+        assert_eq!(
+            classify_server_log_level(
+                "[2026.07.03-07.51.59:997][ 10]Failed Spawned Dino: Piranha | 0.9x",
+                "info"
+            ),
+            "warn"
+        );
+        assert_eq!(
+            classify_server_log_level("Fatal error: Failed to bind server port", "info"),
+            "error"
+        );
     }
 }
 

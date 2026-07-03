@@ -36,6 +36,7 @@ impl Default for GlobalSettings {
 pub enum ServerStatus {
     Running,
     Stopped,
+    Stopping,
     Starting,
     Updating,
     BackingUp,
@@ -92,6 +93,8 @@ pub struct AddInstancePayload {
     pub admin_password: String,
     pub auto_install: bool,
     pub description: String,
+    pub imported_config: Option<Value>,
+    pub imported_mods: Option<Vec<ModItem>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -115,11 +118,35 @@ pub struct ModItem {
     pub update_available: Option<bool>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum LogSource {
+    Application,
+    Server,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ServerLogKind {
+    Console,
+    File,
+}
+
+impl Default for LogSource {
+    fn default() -> Self {
+        Self::Application
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogLine {
     pub id: u64,
     pub time: String,
+    #[serde(default)]
+    pub source: LogSource,
+    #[serde(default)]
+    pub server_log_kind: Option<ServerLogKind>,
     pub instance: String,
     pub level: String,
     pub message: String,
@@ -169,4 +196,25 @@ pub struct InstanceConfigBundle {
     pub instance: ServerInstance,
     pub config: Value,
     pub mods: Vec<ModItem>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedServerConfigPreview {
+    pub install_path: String,
+    pub name: Option<String>,
+    pub map: Option<String>,
+    pub map_code: Option<String>,
+    pub mode: Option<String>,
+    pub game_port: Option<u16>,
+    pub query_port: Option<u16>,
+    pub rcon_port: Option<u16>,
+    pub max_players: Option<u32>,
+    pub cluster_id: Option<String>,
+    pub server_password: Option<String>,
+    pub admin_password: Option<String>,
+    pub config: Value,
+    pub mods: Vec<ModItem>,
+    pub found_files: Vec<String>,
+    pub warnings: Vec<String>,
 }

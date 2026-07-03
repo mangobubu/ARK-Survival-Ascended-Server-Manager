@@ -147,10 +147,10 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
           <Field label="游戏端口" tip="[SessionSettings] Port"><NumberField value={config.gamePort} min={1024} max={65535} onChange={(v) => set('gamePort', v)} /></Field>
           <Field label="查询端口" tip="Steam 查询端口"><NumberField value={config.queryPort} min={1024} max={65535} onChange={(v) => set('queryPort', v)} /></Field>
         </div>
-        <Field label="RCON 远程控制"><Switch checked={config.rconEnabled} onChange={(v) => set('rconEnabled', v)} /></Field>
+        <Field label="RCON 远程控制" tip="管理器需要通过 RCON 判断启动完成并执行保存、停止命令"><Switch checked disabled /></Field>
         <Field label="RCON 端口"><NumberField value={config.rconPort} min={1024} max={65535} onChange={(v) => set('rconPort', v)} /></Field>
         <Field label="加入服务器密码"><Input.Password value={config.serverPassword} onChange={(e) => set('serverPassword', e.target.value)} placeholder="留空表示无密码" /></Field>
-        <Field label="管理员密码"><Input.Password value={config.adminPassword} onChange={(e) => set('adminPassword', e.target.value)} /></Field>
+        <Field label="管理员密码" tip="必填，用于 RCON 状态探测与安全停服"><Input.Password value={config.adminPassword} status={config.adminPassword.trim() ? undefined : 'error'} onChange={(e) => set('adminPassword', e.target.value)} placeholder="必填" /></Field>
         <Field label="观察者密码"><Input.Password value={config.spectatorPassword} onChange={(e) => set('spectatorPassword', e.target.value)} placeholder="留空表示不启用" /></Field>
         <Field label="服务器可见性"><Radio.Group value={config.visibility} onChange={(e) => set('visibility', e.target.value)} optionType="button" buttonStyle="solid" options={[{ label: '公开', value: 'public' }, { label: '私有', value: 'private' }]} /></Field>
         <Field label="集群名称 Cluster ID" wide><Input value={config.clusterId} onChange={(e) => set('clusterId', e.target.value)} /></Field>
@@ -494,8 +494,8 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
         <div className="config-title-text"><span className="ark-mark">✣</span><span>实例配置编辑</span><span className="config-title-separator">/</span><strong>{instance.name}</strong><span>·</span><span>{instance.map}</span></div>
         <Space>
           {dirty && <Tag color="gold">有未保存修改</Tag>}
-          <Tag color={instance.status === 'running' ? 'success' : instance.status === 'error' ? 'error' : ['starting', 'updating', 'backingUp'].includes(instance.status) ? 'processing' : 'default'}>
-            {instance.status === 'running' ? '● 运行中' : instance.status === 'starting' ? '● 启动中' : instance.status === 'updating' ? '● 更新中' : instance.status === 'backingUp' ? '● 备份中' : instance.status === 'error' ? '● 异常' : '● 已停止'}
+          <Tag color={instance.status === 'running' ? 'success' : instance.status === 'error' ? 'error' : ['starting', 'stopping', 'updating', 'backingUp'].includes(instance.status) ? 'processing' : 'default'}>
+            {instance.status === 'running' ? '● 运行中' : instance.status === 'stopping' ? '● 停止中' : instance.status === 'starting' ? '● 启动中' : instance.status === 'updating' ? '● 更新中' : instance.status === 'backingUp' ? '● 备份中' : instance.status === 'error' ? '● 异常' : '● 已停止'}
           </Tag>
         </Space>
       </div>

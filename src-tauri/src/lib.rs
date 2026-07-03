@@ -5,6 +5,7 @@ mod ark_config;
 mod backup;
 mod commands;
 mod import_export;
+mod instance_config_import;
 mod models;
 mod rcon;
 mod steamcmd;
@@ -35,6 +36,7 @@ pub fn run() {
             commands::list_instances,
             commands::check_instance_port,
             commands::create_instance,
+            commands::read_server_directory_config,
             commands::get_instance_config,
             commands::get_instance_mods,
             commands::save_instance_config,
@@ -48,13 +50,16 @@ pub fn run() {
             commands::refresh_instance_status,
             commands::query_logs,
             commands::clear_logs,
+            commands::clear_scoped_logs,
             commands::create_backup,
             commands::list_backups,
             commands::restore_backup,
             commands::export_instance_config,
             commands::export_cluster,
             commands::import_instance_config,
+            commands::delete_instance,
             commands::open_instance_directory,
+            commands::open_directory_path,
         ])
         .run(tauri::generate_context!())
         .expect("启动 ASA 服务器管理器失败");

@@ -12,11 +12,17 @@ import {
   SafetyCertificateOutlined,
 } from '@ant-design/icons'
 import { emitTo } from '@tauri-apps/api/event'
+import { open } from '@tauri-apps/plugin-dialog'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
-import { Button, Form, Input, InputNumber, Radio, Select, Space, Switch, Typography, message } from 'antd'
-import { checkInstancePort, createInstance } from './backendApi'
+import { Button, Form, Input, InputNumber, Radio, Select, Space, Switch, Tooltip, Typography, message } from 'antd'
+import { checkInstancePort, createInstance, readServerDirectoryConfig } from './backendApi'
 import { defaultConfig, defaultGlobalSettings, serverMapOptions } from './data'
-import type { AddInstancePayload, InstanceCreatedEvent, InstancePortKind } from './types'
+import type {
+  AddInstancePayload,
+  ImportedServerConfigPreview,
+  InstanceCreatedEvent,
+  InstancePortKind,
+} from './types'
 import { ADD_INSTANCE_CREATED_EVENT, MAIN_WINDOW_LABEL } from './windowEvents'
 
 const { Text, Title } = Typography
@@ -77,6 +83,8 @@ export default function AddInstanceWindow() {
   const [form] = Form.useForm<AddInstanceFormValues>()
   const [messageApi, contextHolder] = message.useMessage()
   const [submitting, setSubmitting] = useState(false)
+  const [selectingDirectory, setSelectingDirectory] = useState(false)
+  const [importedPreview, setImportedPreview] = useState<ImportedServerConfigPreview | null>(null)
   const [portChecks, setPortChecks] = useState<Record<PortField, PortCheckState>>(createInitialPortChecks)
   const portCheckRequestRef = useRef(0)
 
@@ -115,6 +123,7 @@ export default function AddInstanceWindow() {
   })
   const hasUnavailablePort = PORT_FIELDS.some(({ name }) => portChecks[name].status === 'unavailable')
   const portPlanText = portsReady ? '可用' : hasUnavailablePort ? '不可用' : '检查中'
+  const importPlanText = importedPreview ? '已读取' : '可选'
   const readyCount = [
     watchedValues.name,
     watchedValues.mapCode,
@@ -250,6 +259,59 @@ export default function AddInstanceWindow() {
     return {}
   }
 
+  const clearImportedPreview = () => {
+    if (importedPreview) {
+      setImportedPreview(null)
+    }
+  }
+
+  const selectServerDirectory = async () => {
+    setSelectingDirectory(true)
+    try {
+      const selectedPath = await open({
+        defaultPath: form.getFieldValue('installPath') || undefined,
+        directory: true,
+        multiple: false,
+        title: '选择 ASA 服务端文件夹',
+      })
+      if (!selectedPath) return
+
+      const imported = await readServerDirectoryConfig(selectedPath)
+      const importedValues: Partial<AddInstanceFormValues> = {
+        installPath: imported.installPath || selectedPath,
+        autoInstall: true,
+      }
+
+      if (imported.name) importedValues.name = imported.name
+      if (imported.mapCode && serverMapOptions.some((item) => item.code === imported.mapCode)) {
+        importedValues.mapCode = imported.mapCode
+      }
+      if (imported.mode) importedValues.mode = imported.mode
+      if (imported.gamePort) importedValues.gamePort = imported.gamePort
+      if (imported.queryPort) importedValues.queryPort = imported.queryPort
+      if (imported.rconPort) importedValues.rconPort = imported.rconPort
+      if (imported.maxPlayers) importedValues.maxPlayers = imported.maxPlayers
+      if (imported.clusterId) importedValues.clusterId = imported.clusterId
+      if (imported.serverPassword !== null) importedValues.serverPassword = imported.serverPassword
+      if (imported.adminPassword) importedValues.adminPassword = imported.adminPassword
+
+      form.setFieldsValue(importedValues)
+      setImportedPreview(imported.foundFiles.length > 0 ? imported : null)
+
+      if (imported.foundFiles.length > 0) {
+        const modText = imported.mods.length > 0 ? `，包含 ${imported.mods.length} 个 MOD` : ''
+        messageApi.success(`已读取 ${imported.foundFiles.length} 个配置文件${modText}，创建后将执行更新/校验`)
+      } else {
+        messageApi.info('已选择目录；新安装的服务端通常要启动一次或保存配置后才会生成可导入配置，创建后将先执行更新/校验')
+      }
+    } catch (error) {
+      setImportedPreview(null)
+      messageApi.error(`读取服务端目录失败：${String(error)}`)
+    } finally {
+      setSelectingDirectory(false)
+    }
+  }
+
   const handleFinish = async (values: AddInstanceFormValues) => {
     const portsReadyForValues = PORT_FIELDS.every(({ name }) => {
       const check = portChecks[name]
@@ -278,6 +340,8 @@ export default function AddInstanceWindow() {
       adminPassword: (values.adminPassword ?? '').trim(),
       autoInstall: values.autoInstall,
       description: values.description.trim(),
+      importedConfig: importedPreview?.config,
+      importedMods: importedPreview?.mods,
     }
 
     setSubmitting(true)
@@ -388,8 +452,36 @@ export default function AddInstanceWindow() {
                 name="installPath"
                 rules={[{ required: true, message: '请输入实例目录' }]}
               >
-                <Input prefix={<DatabaseOutlined />} />
+                <Input
+                  onChange={clearImportedPreview}
+                  prefix={<DatabaseOutlined />}
+                  suffix={(
+                    <Tooltip title="选择服务端文件夹并读取配置">
+                      <Button
+                        aria-label="选择服务端文件夹"
+                        className="add-instance-path-picker"
+                        htmlType="button"
+                        icon={<FolderOpenOutlined />}
+                        loading={selectingDirectory}
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          void selectServerDirectory()
+                        }}
+                        onMouseDown={(event) => event.preventDefault()}
+                        size="small"
+                        type="text"
+                      />
+                    </Tooltip>
+                  )}
+                />
               </Form.Item>
+              {importedPreview && (
+                <div className="add-instance-import-status">
+                  <span>已读取 {importedPreview.foundFiles.length} 个配置文件</span>
+                  <b>{importedPreview.mods.length > 0 ? `${importedPreview.mods.length} 个 MOD` : '未发现 MOD'}</b>
+                </div>
+              )}
               <div className="add-instance-two-column">
                 <Form.Item label="服务器加入密码" name="serverPassword" tooltip="玩家加入服务器时需要输入的密码，留空表示不设置">
                   <Input.Password prefix={<SafetyCertificateOutlined />} placeholder="留空表示无需密码" />
@@ -401,8 +493,8 @@ export default function AddInstanceWindow() {
               <div className="add-instance-two-column">
                 <div className="add-instance-switch-row add-instance-switch-row--full">
                   <div>
-                    <strong>创建后安装服务端文件</strong>
-                    <span>使用当前 SteamCMD 配置</span>
+                    <strong>创建后更新/校验服务端文件</strong>
+                    <span>使用当前 SteamCMD 配置执行 app_update validate</span>
                   </div>
                   <Form.Item name="autoInstall" valuePropName="checked"><Switch /></Form.Item>
                 </div>
@@ -419,6 +511,7 @@ export default function AddInstanceWindow() {
               <div><span>基础资料</span><b>{readyCount >= 2 ? '完成' : '待补全'}</b></div>
               <div><span>端口规划</span><b>{portPlanText}</b></div>
               <div><span>实例目录</span><b>{watchedValues.installPath ? '完成' : '待补全'}</b></div>
+              <div><span>配置导入</span><b>{importPlanText}</b></div>
             </div>
             <div className="add-instance-summary">
               <div><span>名称</span><strong>{watchedValues.name || '未命名'}</strong></div>
@@ -428,10 +521,11 @@ export default function AddInstanceWindow() {
               <div><span>加入密码</span><strong>{watchedValues.serverPassword ? '已设置' : '未设置'}</strong></div>
               <div><span>端口</span><strong>{watchedValues.gamePort ?? '-'} / {watchedValues.queryPort ?? '-'}</strong></div>
               <div><span>RCON</span><strong>{watchedValues.rconPort ?? '-'}</strong></div>
+              {importedPreview && <div><span>导入 MOD</span><strong>{importedPreview.mods.length}</strong></div>}
             </div>
             <div className="add-instance-path">
               <FieldTimeOutlined />
-              <span>{watchedValues.autoInstall ? '创建后排队安装' : '仅创建实例配置'}</span>
+              <span>{watchedValues.autoInstall ? '创建后排队更新/校验' : '仅创建实例配置'}</span>
             </div>
             <Text className="add-instance-preview__note" type="secondary">
               {watchedValues.installPath || '等待实例目录'}

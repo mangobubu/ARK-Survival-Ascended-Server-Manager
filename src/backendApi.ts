@@ -5,6 +5,7 @@ import type {
   ExportResult,
   GlobalSettings,
   ImportResult,
+  ImportedServerConfigPreview,
   InstancePortKind,
   JobProgress,
   LogLine,
@@ -24,6 +25,9 @@ export const checkInstancePort = (port: number, portKind: InstancePortKind) =>
   invoke<PortCheckResult>('check_instance_port', { port, portKind })
 
 export const createInstance = (payload: AddInstancePayload) => invoke<ServerInstance>('create_instance', { payload })
+
+export const readServerDirectoryConfig = (path: string) =>
+  invoke<ImportedServerConfigPreview>('read_server_directory_config', { path })
 
 export const getInstanceConfig = (instanceId: string) => invoke<Partial<ServerConfig>>('get_instance_config', { instanceId })
 
@@ -58,6 +62,13 @@ export const queryLogs = (limit = 500) => invoke<LogLine[]>('query_logs', { limi
 
 export const clearLogs = () => invoke<void>('clear_logs')
 
+export const clearScopedLogs = (scope: {
+  source: LogLine['source']
+  instance?: string
+  serverLogKind?: NonNullable<LogLine['serverLogKind']>
+}) =>
+  invoke<void>('clear_scoped_logs', scope)
+
 export const createBackup = (instanceId: string) => invoke<BackupItem>('create_backup', { instanceId })
 
 export const listBackups = (instanceId: string) => invoke<BackupItem[]>('list_backups', { instanceId })
@@ -72,4 +83,8 @@ export const exportCluster = () => invoke<ExportResult>('export_cluster')
 
 export const importInstanceConfig = (path: string) => invoke<ImportResult>('import_instance_config', { path })
 
+export const deleteInstance = (instanceId: string) => invoke<ServerInstance>('delete_instance', { instanceId })
+
 export const openInstanceDirectory = (instanceId: string) => invoke<void>('open_instance_directory', { instanceId })
+
+export const openDirectoryPath = (path: string) => invoke<void>('open_directory_path', { path })
