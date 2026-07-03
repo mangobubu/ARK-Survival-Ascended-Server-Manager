@@ -298,6 +298,14 @@ button, input, textarea { font: inherit; }
 .config-panel .ant-select-single .ant-select-selector,
 .config-panel .ant-segmented { min-height: 28px; height: 28px; }
 .config-panel .ant-input-number-input { height: 26px; }
+.config-panel .ant-input-affix-wrapper { align-items: center; }
+.config-panel .ant-input-affix-wrapper .ant-input {
+  min-height: 0;
+  height: 26px;
+  padding-block: 0;
+  line-height: 26px;
+}
+.config-panel .ant-input-affix-wrapper .ant-input-suffix { display: inline-flex; align-items: center; }
 .config-panel .ant-select-single .ant-select-selector { align-items: center; }
 .config-panel textarea.ant-input { height: auto; min-height: 58px; }
 .field-pair { display: grid; grid-template-columns: 1fr; gap: 4px; }
