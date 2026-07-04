@@ -34,7 +34,7 @@ export const getInstanceConfig = (instanceId: string) => invoke<Partial<ServerCo
 export const getInstanceMods = (instanceId: string) => invoke<ModItem[]>('get_instance_mods', { instanceId })
 
 export const saveInstanceConfig = (instanceId: string, config: ServerConfig, mods: ModItem[]) =>
-  invoke<void>('save_instance_config', { instanceId, config, mods })
+  invoke<ServerInstance>('save_instance_config', { instanceId, config, mods })
 
 export const applyInstanceConfig = (instanceId: string, config: ServerConfig, mods: ModItem[]) =>
   invoke<ServerInstance>('apply_instance_config', { instanceId, config, mods })

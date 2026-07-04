@@ -8,8 +8,10 @@ use std::{
 };
 
 const SERVER_SETTINGS: &[&str] = &["ServerSettings"];
-const SESSION_SETTINGS: &[&str] = &["ServerSettings", "SessionSettings"];
+const SESSION_SETTINGS: &[&str] = &["SessionSettings", "ServerSettings"];
+const GAME_SESSION_SETTINGS: &[&str] = &["/Script/Engine.GameSession", "ServerSettings"];
 const GAME_MODE_SETTINGS: &[&str] = &["/Script/ShooterGame.ShooterGameMode", ""];
+const ENGINE_IP_NET_DRIVER_SETTINGS: &[&str] = &["/Script/OnlineSubsystemUtils.IpNetDriver"];
 
 const MAPS: &[(&str, &str)] = &[
     ("TheIsland_WP", "The Island"),
@@ -56,6 +58,7 @@ pub fn read_server_directory_config(path: &Path) -> Result<ImportedServerConfigP
     let install_path = infer_install_path(&selected_path, &config_dir);
     let game_user_settings_path = config_dir.join("GameUserSettings.ini");
     let game_ini_path = config_dir.join("Game.ini");
+    let engine_ini_path = config_dir.join("Engine.ini");
 
     let mut config = Map::new();
     let mut found_files = Vec::new();
@@ -79,6 +82,12 @@ pub fn read_server_directory_config(path: &Path) -> Result<ImportedServerConfigP
         read_game_ini(&document, &mut config);
     } else {
         warnings.push(format!("未找到 Game.ini：{}", path_text(&game_ini_path)));
+    }
+
+    if engine_ini_path.is_file() {
+        let document = parse_ini_file(&engine_ini_path)?;
+        found_files.push(path_text(&engine_ini_path));
+        read_engine_ini(&document, &mut config);
     }
 
     if found_files.is_empty() {
@@ -157,18 +166,29 @@ fn read_game_user_settings(
         map_text(document, config, SERVER_SETTINGS, ini_key, config_key);
     }
 
-    for (ini_key, config_key) in [
-        ("RCONPort", "rconPort"),
-        ("Port", "gamePort"),
-        ("QueryPort", "queryPort"),
-    ] {
+    for (ini_key, config_key) in [("Port", "gamePort"), ("QueryPort", "queryPort")] {
+        map_u16(document, config, SESSION_SETTINGS, ini_key, config_key);
+    }
+
+    for (ini_key, config_key) in [("RCONPort", "rconPort")] {
         map_u16(document, config, SERVER_SETTINGS, ini_key, config_key);
     }
 
+    map_u32(
+        document,
+        config,
+        GAME_SESSION_SETTINGS,
+        "MaxPlayers",
+        "maxPlayers",
+    );
+
     for (ini_key, config_key) in [
-        ("MaxPlayers", "maxPlayers"),
         ("MaxTamedDinos", "maxTamedDinos"),
+        ("TheMaxStructuresInRange", "structureLimit"),
+        ("RCONServerGameLogBuffer", "rconBufferSize"),
         ("KickIdlePlayersPeriod", "kickIdlePlayersPeriod"),
+        ("TribeNameChangeCooldown", "tribeNameChangeCooldown"),
+        ("LimitBunkersPerTribeNum", "limitBunkersPerTribeNum"),
         (
             "TributeCharacterExpirationSeconds",
             "tributeCharacterExpirationSeconds",
@@ -196,6 +216,7 @@ fn read_game_user_settings(
         ("ServerCrosshair", "crosshair"),
         ("ShowMapPlayerLocation", "showMapPlayer"),
         ("AllowFlyerCarryPvE", "flyerCarry"),
+        ("AllowFlyingStaminaRecovery", "allowFlyingStaminaRecovery"),
         ("PreventDownloadItems", "preventDownloadItems"),
         ("PreventDownloadDinos", "preventDownloadDinos"),
         ("PreventDownloadSurvivors", "preventDownloadSurvivors"),
@@ -206,14 +227,60 @@ fn read_game_user_settings(
         ("AllowCaveBuildingPvE", "allowCaveBuildingPvE"),
         ("AllowCaveBuildingPvP", "allowCaveBuildingPvP"),
         ("EnableIdlePlayerKick", "enableIdlePlayerKick"),
+        (
+            "AllowAnyoneBabyImprintCuddle",
+            "allowAnyoneBabyImprintCuddle",
+        ),
+        (
+            "FastDecayUnsnappedCoreStructures",
+            "fastDecayUnsnappedCoreStructures",
+        ),
+        ("AllowCryoFridgeOnSaddle", "allowCryoFridgeOnSaddle"),
+        ("DisableCryopodEnemyCheck", "disableCryopodEnemyCheck"),
+        (
+            "DisableCryopodFridgeRequirement",
+            "disableCryopodFridgeRequirement",
+        ),
+        ("DisableCryopodCooldown", "disableCryopodCooldown"),
+        ("NonPermanentDiseases", "nonPermanentDiseases"),
+        ("LimitBunkersPerTribe", "limitBunkersPerTribe"),
+        (
+            "AllowBunkersInPreventionZones",
+            "allowBunkersInPreventionZones",
+        ),
+        (
+            "AllowRidingDinosInsideBunkers",
+            "allowRidingDinosInsideBunkers",
+        ),
+        (
+            "AllowBunkerModulesAboveGround",
+            "allowBunkerModulesAboveGround",
+        ),
+        ("AllowDinoAIInsideBunkers", "allowDinoAIInsideBunkers"),
+        (
+            "AllowBunkerModulesInPreventionZones",
+            "allowBunkerModulesInPreventionZones",
+        ),
+        (
+            "CrossARKAllowForeignDinoDownloads",
+            "crossArkAllowForeignDinoDownloads",
+        ),
         ("ServerAdminLogs", "adminLogging"),
         ("AdminLogging", "adminLogging"),
         ("ChatLogging", "chatLogging"),
     ] {
         map_bool(document, config, SERVER_SETTINGS, ini_key, config_key);
     }
+    map_bool_inverted(
+        document,
+        config,
+        SERVER_SETTINGS,
+        "PreventDiseases",
+        "enableDiseases",
+    );
 
     for (ini_key, config_key) in [
+        ("OverrideOfficialDifficulty", "difficulty"),
         ("XPMultiplier", "xpMultiplier"),
         ("TamingSpeedMultiplier", "tamingSpeed"),
         ("HarvestAmountMultiplier", "harvestAmount"),
@@ -292,6 +359,28 @@ fn read_game_user_settings(
             "raidDinoFoodDrainMultiplier",
         ),
         ("MinimumDinoReuploadInterval", "minimumDinoReuploadInterval"),
+        (
+            "PerPlatformMaxStructuresMultiplier",
+            "platformStructureMultiplier",
+        ),
+        (
+            "EnemyAccessBunkerHPThreshold",
+            "enemyAccessBunkerHPThreshold",
+        ),
+        (
+            "BunkerUnderHPThresholdDmgMultiplier",
+            "bunkerUnderHPThresholdDmgMultiplier",
+        ),
+        ("MinDistanceBetweenBunkers", "minDistanceBetweenBunkers"),
+        ("StructurePickupHoldDuration", "structurePickupHoldDuration"),
+        (
+            "StructurePickupTimeAfterPlacement",
+            "structurePickupTimeAfterPlacement",
+        ),
+        (
+            "AutoDestroyOldStructuresMultiplier",
+            "autoDestroyOldStructuresMultiplier",
+        ),
     ] {
         map_f64(document, config, SERVER_SETTINGS, ini_key, config_key);
     }
@@ -314,7 +403,6 @@ fn read_game_user_settings(
 
 fn read_game_ini(document: &IniDocument, config: &mut Map<String, Value>) {
     for (ini_key, config_key) in [
-        ("OverrideOfficialDifficulty", "difficulty"),
         ("MatingIntervalMultiplier", "matingInterval"),
         ("MatingSpeedMultiplier", "matingSpeedMultiplier"),
         ("EggHatchSpeedMultiplier", "eggHatchSpeed"),
@@ -336,96 +424,81 @@ fn read_game_ini(document: &IniDocument, config: &mut Map<String, Value>) {
         ),
         ("BabyImprintAmountMultiplier", "babyImprintAmountMultiplier"),
         (
-            "PerPlatformMaxStructuresMultiplier",
-            "platformStructureMultiplier",
-        ),
-        ("StructurePickupHoldDuration", "structurePickupHoldDuration"),
-        (
-            "AutoDestroyOldStructuresMultiplier",
-            "autoDestroyOldStructuresMultiplier",
+            "ResourceNoReplenishRadiusPlayers",
+            "resourceNoReplenishRadiusPlayers",
         ),
         (
-            "EnemyAccessBunkerHPThreshold",
-            "enemyAccessBunkerHPThreshold",
+            "ResourceNoReplenishRadiusStructures",
+            "resourceNoReplenishRadiusStructures",
+        ),
+        ("CropGrowthSpeedMultiplier", "cropGrowthSpeedMultiplier"),
+        ("CropDecaySpeedMultiplier", "cropDecaySpeedMultiplier"),
+        (
+            "SupplyCrateLootQualityMultiplier",
+            "supplyCrateLootQualityMultiplier",
         ),
         (
-            "BunkerUnderHPThresholdDmgMultiplier",
-            "bunkerUnderHPThresholdDmgMultiplier",
+            "FishingLootQualityMultiplier",
+            "fishingLootQualityMultiplier",
+        ),
+        (
+            "FuelConsumptionIntervalMultiplier",
+            "fuelConsumptionIntervalMultiplier",
+        ),
+        (
+            "GlobalSpoilingTimeMultiplier",
+            "globalSpoilingTimeMultiplier",
+        ),
+        (
+            "GlobalItemDecompositionTimeMultiplier",
+            "globalItemDecompositionTimeMultiplier",
+        ),
+        (
+            "GlobalCorpseDecompositionTimeMultiplier",
+            "globalCorpseDecompositionTimeMultiplier",
         ),
     ] {
         map_f64(document, config, GAME_MODE_SETTINGS, ini_key, config_key);
     }
 
     for (ini_key, config_key) in [
-        ("TheMaxStructuresInRange", "structureLimit"),
         ("MaxNumberOfPlayersInTribe", "maxTribeSize"),
         (
             "StructureDamageRepairCooldown",
             "structureDamageRepairCooldown",
         ),
-        (
-            "StructurePickupTimeAfterPlacement",
-            "structurePickupTimeAfterPlacement",
-        ),
         ("LimitGeneratorsNum", "limitGeneratorsNum"),
         ("LimitGeneratorsRange", "limitGeneratorsRange"),
-        ("TribeNameChangeCooldown", "tribeNameChangeCooldown"),
         ("MaxAlliancesPerTribe", "maxAlliancesPerTribe"),
         ("MaxTribesPerAlliance", "maxTribesPerAlliance"),
-        ("LimitBunkersPerTribeNum", "limitBunkersPerTribeNum"),
-        ("MinDistanceBetweenBunkers", "minDistanceBetweenBunkers"),
     ] {
         map_u32(document, config, GAME_MODE_SETTINGS, ini_key, config_key);
     }
 
     for (ini_key, config_key) in [
         (
-            "bAllowAnyoneBabyImprintCuddle",
-            "allowAnyoneBabyImprintCuddle",
-        ),
-        (
             "bDisableStructurePlacementCollision",
             "disablePlacementCollision",
         ),
         ("bPvEAllowTribeWar", "tribeAlliances"),
         ("bPvEDisableFriendlyFire", "disableFriendlyFire"),
-        (
-            "FastDecayUnsnappedCoreStructures",
-            "fastDecayUnsnappedCoreStructures",
-        ),
-        (
-            "bFastDecayUnsnappedCoreStructures",
-            "fastDecayUnsnappedCoreStructures",
-        ),
-        ("AllowCryoFridgeOnSaddle", "allowCryoFridgeOnSaddle"),
-        ("DisableCryopodEnemyCheck", "disableCryopodEnemyCheck"),
-        (
-            "DisableCryopodFridgeRequirement",
-            "disableCryopodFridgeRequirement",
-        ),
-        ("DisableCryopodCooldown", "disableCryopodCooldown"),
-        ("EnableDiseases", "enableDiseases"),
-        ("NonPermanentDiseases", "nonPermanentDiseases"),
-        ("LimitBunkersPerTribe", "limitBunkersPerTribe"),
-        (
-            "AllowBunkersInPreventionZones",
-            "allowBunkersInPreventionZones",
-        ),
-        (
-            "AllowRidingDinosInsideBunkers",
-            "allowRidingDinosInsideBunkers",
-        ),
-        (
-            "AllowBunkerModulesAboveGround",
-            "allowBunkerModulesAboveGround",
-        ),
-        ("AllowDinoAIInsideBunkers", "allowDinoAIInsideBunkers"),
-        (
-            "AllowBunkerModulesInPreventionZones",
-            "allowBunkerModulesInPreventionZones",
-        ),
     ] {
         map_bool(document, config, GAME_MODE_SETTINGS, ini_key, config_key);
+    }
+}
+
+fn read_engine_ini(document: &IniDocument, config: &mut Map<String, Value>) {
+    for (ini_key, config_key) in [
+        ("NetServerMaxTickRate", "networkTickRate"),
+        ("MaxClientRate", "maxClientRate"),
+    ] {
+        map_u32(
+            document,
+            config,
+            ENGINE_IP_NET_DRIVER_SETTINGS,
+            ini_key,
+            config_key,
+        );
     }
 }
 
@@ -690,6 +763,18 @@ fn map_bool(
     }
 }
 
+fn map_bool_inverted(
+    document: &IniDocument,
+    config: &mut Map<String, Value>,
+    sections: &[&str],
+    ini_key: &str,
+    config_key: &str,
+) {
+    if let Some(value) = document.get(sections, ini_key).and_then(parse_bool) {
+        config.insert(config_key.to_string(), json!(!value));
+    }
+}
+
 fn map_u16(
     document: &IniDocument,
     config: &mut Map<String, Value>,
@@ -876,20 +961,29 @@ mod tests {
             config_dir.join("GameUserSettings.ini"),
             r#"
 [ServerSettings]
-SessionName=导入服务器
 ServerPassword=
 ServerAdminPassword=admin-123
 RCONEnabled=True
 RCONPort=32340
-Port=7787
-QueryPort=27025
-MaxPlayers=42
+RCONServerGameLogBuffer=9000
 ServerPVE=False
+OverrideOfficialDifficulty=7.0
 XPMultiplier=3.5
+AllowFlyingStaminaRecovery=True
+CrossARKAllowForeignDinoDownloads=True
+PerPlatformMaxStructuresMultiplier=1.5
+TheMaxStructuresInRange=10500
+LimitBunkersPerTribe=True
+LimitBunkersPerTribeNum=3
 ActiveMods=12345, 67890, 12345, abc
 
 [SessionSettings]
-SessionName=备用名称
+SessionName=导入服务器
+Port=7787
+QueryPort=27025
+
+[/Script/Engine.GameSession]
+MaxPlayers=42
 "#,
         )
         .expect("写入 GameUserSettings.ini");
@@ -897,12 +991,21 @@ SessionName=备用名称
             config_dir.join("Game.ini"),
             r#"
 [/Script/ShooterGame.ShooterGameMode]
-OverrideOfficialDifficulty=7.0
+ResourceNoReplenishRadiusPlayers=2.5
 MatingIntervalMultiplier=0.2
 bDisableStructurePlacementCollision=True
 "#,
         )
         .expect("写入 Game.ini");
+        fs::write(
+            config_dir.join("Engine.ini"),
+            r#"
+[/Script/OnlineSubsystemUtils.IpNetDriver]
+NetServerMaxTickRate=45
+MaxClientRate=150000
+"#,
+        )
+        .expect("写入 Engine.ini");
         let save_dir = temp
             .path()
             .join("ShooterGame")
@@ -922,6 +1025,22 @@ bDisableStructurePlacementCollision=True
         assert_eq!(preview.map_code.as_deref(), Some("TheCenter_WP"));
         assert_eq!(preview.mods.len(), 2);
         assert_eq!(preview.config["xpMultiplier"], json!(3.5));
+        assert_eq!(preview.config["rconBufferSize"], json!(9000));
+        assert_eq!(preview.config["allowFlyingStaminaRecovery"], json!(true));
+        assert_eq!(
+            preview.config["crossArkAllowForeignDinoDownloads"],
+            json!(true)
+        );
+        assert_eq!(
+            preview.config["resourceNoReplenishRadiusPlayers"],
+            json!(2.5)
+        );
+        assert_eq!(preview.config["platformStructureMultiplier"], json!(1.5));
+        assert_eq!(preview.config["networkTickRate"], json!(45));
+        assert_eq!(preview.config["maxClientRate"], json!(150000));
+        assert_eq!(preview.config["structureLimit"], json!(10500));
+        assert_eq!(preview.config["limitBunkersPerTribe"], json!(true));
+        assert_eq!(preview.config["limitBunkersPerTribeNum"], json!(3));
         assert_eq!(preview.config["difficulty"], json!(7.0));
         assert_eq!(preview.config["disablePlacementCollision"], json!(true));
     }

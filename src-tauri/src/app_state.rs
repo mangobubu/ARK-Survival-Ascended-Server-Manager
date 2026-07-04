@@ -328,9 +328,10 @@ impl AppRuntime {
             &instance.name,
             "success",
             &format!(
-                "已创建服务器实例，初始 ARK 配置已写入：{}、{}",
+                "已创建服务器实例，初始 ARK 配置已写入：{}、{}、{}",
                 applied_config.game_user_settings_path.to_string_lossy(),
-                applied_config.game_ini_path.to_string_lossy()
+                applied_config.game_ini_path.to_string_lossy(),
+                applied_config.engine_ini_path.to_string_lossy()
             ),
         )?;
         self.persist()?;
@@ -356,15 +357,24 @@ impl AppRuntime {
         instance_id: &str,
         config: Value,
         mods: Vec<ModItem>,
-    ) -> Result<(), String> {
-        self.get_instance(instance_id)?;
+    ) -> Result<ServerInstance, String> {
         let config = normalize_required_rcon_config(config)?;
-        {
+        let updated = {
             let mut data = self.lock()?;
+            let instance_index = data
+                .instances
+                .iter()
+                .position(|item| item.id == instance_id)
+                .ok_or_else(|| format!("未找到服务器实例：{instance_id}"))?;
+            let current = data.instances[instance_index].clone();
+            let updated = instance_with_config_metadata(&data.instances, &current, &config)?;
+            data.instances[instance_index] = updated.clone();
             data.configs.insert(instance_id.to_string(), config);
             data.mods.insert(instance_id.to_string(), mods);
-        }
-        self.persist()
+            updated
+        };
+        self.persist()?;
+        Ok(updated)
     }
 
     pub fn add_log(&self, instance: &str, level: &str, message: &str) -> Result<LogLine, String> {
@@ -616,6 +626,119 @@ pub fn normalize_required_rcon_config(mut config: Value) -> Result<Value, String
     }
     config_map.insert("rconEnabled".to_string(), json!(true));
     Ok(config)
+}
+
+fn instance_with_config_metadata(
+    instances: &[ServerInstance],
+    current: &ServerInstance,
+    config: &Value,
+) -> Result<ServerInstance, String> {
+    let mut updated = current.clone();
+
+    if let Some(session_name) = trimmed_config_string(config, "sessionName") {
+        if session_name.is_empty() {
+            return Err("服务器名称不能为空".to_string());
+        }
+        updated.name = session_name;
+    }
+    if let Some(game_port) = config_u16(config, "gamePort") {
+        updated.game_port = game_port;
+    }
+    if let Some(query_port) = config_u16(config, "queryPort") {
+        updated.query_port = query_port;
+    }
+    if let Some(rcon_port) = config_u16(config, "rconPort") {
+        updated.rcon_port = rcon_port;
+    }
+    if let Some(max_players) = config_u32(config, "maxPlayers") {
+        updated.max_players = max_players;
+    }
+    if let Some(cluster_id) = trimmed_config_string(config, "clusterId") {
+        updated.cluster_id = cluster_id;
+    }
+    if let Some(pve) = config.get("pve").and_then(Value::as_bool) {
+        updated.mode = if pve { "PvE" } else { "PvP" }.to_string();
+    }
+
+    validate_updated_instance_metadata(instances, current, &updated)?;
+    Ok(updated)
+}
+
+fn validate_updated_instance_metadata(
+    instances: &[ServerInstance],
+    current: &ServerInstance,
+    updated: &ServerInstance,
+) -> Result<(), String> {
+    if updated.name.trim().is_empty() {
+        return Err("服务器名称不能为空".to_string());
+    }
+    if instances
+        .iter()
+        .any(|item| item.id != current.id && item.name.eq_ignore_ascii_case(updated.name.trim()))
+    {
+        return Err(format!("实例名称已存在：{}", updated.name.trim()));
+    }
+    if [updated.game_port, updated.query_port, updated.rcon_port]
+        .iter()
+        .any(|port| *port < 1024)
+    {
+        return Err("端口必须在 1024-65535 范围内".to_string());
+    }
+    if updated.game_port == updated.query_port
+        || updated.game_port == updated.rcon_port
+        || updated.query_port == updated.rcon_port
+    {
+        return Err("游戏端口、查询端口和 RCON 端口不能重复".to_string());
+    }
+
+    let other_instances: Vec<ServerInstance> = instances
+        .iter()
+        .filter(|item| item.id != current.id)
+        .cloned()
+        .collect();
+    for (port, label) in [
+        (updated.game_port, "游戏端口"),
+        (updated.query_port, "查询端口"),
+        (updated.rcon_port, "RCON 端口"),
+    ] {
+        if instance_uses_port(&other_instances, port) {
+            return Err(format!("{label} {port} 已被其他实例占用"));
+        }
+    }
+    for (next_port, previous_port, label) in [
+        (updated.game_port, current.game_port, "游戏端口"),
+        (updated.query_port, current.query_port, "查询端口"),
+        (updated.rcon_port, current.rcon_port, "RCON 端口"),
+    ] {
+        if next_port != previous_port {
+            if let Some(reason) = system_port_unavailable_reason(next_port) {
+                return Err(format!("{label} {next_port} 不可用：{reason}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn trimmed_config_string(config: &Value, key: &str) -> Option<String> {
+    config
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(ToString::to_string)
+}
+
+fn config_u16(config: &Value, key: &str) -> Option<u16> {
+    config
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+}
+
+fn config_u32(config: &Value, key: &str) -> Option<u32> {
+    config
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
 }
 
 fn ensure_port_available(
@@ -1043,8 +1166,10 @@ mod tests {
             .join("WindowsServer");
         let game_user_settings_path = config_dir.join("GameUserSettings.ini");
         let game_ini_path = config_dir.join("Game.ini");
+        let engine_ini_path = config_dir.join("Engine.ini");
         assert!(game_user_settings_path.is_file());
         assert!(game_ini_path.is_file());
+        assert!(engine_ini_path.is_file());
 
         let game_user_settings =
             fs::read_to_string(game_user_settings_path).expect("读取 GameUserSettings.ini");
@@ -1054,16 +1179,30 @@ mod tests {
         assert!(game_user_settings.contains(&format!("Port={game_port}")));
         assert!(game_user_settings.contains(&format!("QueryPort={query_port}")));
         assert!(game_user_settings.contains(&format!("RCONPort={rcon_port}")));
-        assert!(game_user_settings.contains("MaxPlayers=42"));
+        let server_settings_section = game_user_settings
+            .split("[SessionSettings]")
+            .next()
+            .unwrap_or_default();
+        assert!(!server_settings_section.contains("MaxPlayers="));
+        assert!(!game_user_settings.contains("[/Script/Engine.GameSession]"));
+        assert!(!game_user_settings.contains("MaxPlayers=42"));
         assert!(game_user_settings.contains("XPMultiplier=1.5"));
         assert!(game_user_settings.contains("TamingSpeedMultiplier=3"));
         assert!(game_user_settings.contains("NightTimeSpeedScale=1.5"));
+        assert!(game_user_settings.contains("TheMaxStructuresInRange=10500"));
+        assert!(!game_user_settings.contains("LimitBunkersPerTribe="));
 
         let game_ini = fs::read_to_string(game_ini_path).expect("读取 Game.ini");
         assert!(game_ini.contains("MatingIntervalMultiplier=0.25"));
         assert!(game_ini.contains("BabyMatureSpeedMultiplier=20"));
         assert!(game_ini.contains("bDisableStructurePlacementCollision=True"));
-        assert!(game_ini.contains("LimitBunkersPerTribe=True"));
+        assert!(!game_ini.contains("TheMaxStructuresInRange="));
+        assert!(!game_ini.contains("LimitBunkersPerTribe="));
+
+        let engine_ini = fs::read_to_string(engine_ini_path).expect("读取 Engine.ini");
+        assert!(engine_ini.contains("[/Script/OnlineSubsystemUtils.IpNetDriver]"));
+        assert!(engine_ini.contains("NetServerMaxTickRate=30"));
+        assert!(engine_ini.contains("MaxClientRate=100000"));
 
         let stored_config = runtime.get_config(&instance.id).expect("读取实例配置");
         assert_eq!(
@@ -1150,6 +1289,33 @@ mod tests {
         .expect_err("应拒绝空管理员密码");
 
         assert!(error.contains("管理员密码不能为空"));
+    }
+
+    #[test]
+    fn 保存配置会同步实例列表元数据() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let install_path = temp.path().join("metadata-sync-instance");
+        let runtime = test_runtime(temp.path());
+        let instance = runtime
+            .create_instance(test_payload(&install_path))
+            .expect("创建实例");
+        let mut config = runtime.get_config(&instance.id).expect("读取实例配置");
+        let config_map = config.as_object_mut().expect("配置是对象");
+        config_map.insert("sessionName".to_string(), json!("MG-TEST"));
+        config_map.insert("maxPlayers".to_string(), json!(64));
+        config_map.insert("pve".to_string(), json!(false));
+        config_map.insert("clusterId".to_string(), json!("Cluster-B"));
+
+        let updated = runtime
+            .save_config_and_mods(&instance.id, config, Vec::new())
+            .expect("保存配置");
+        let stored = runtime.get_instance(&instance.id).expect("读取实例");
+
+        assert_eq!(updated.name, "MG-TEST");
+        assert_eq!(stored.name, "MG-TEST");
+        assert_eq!(stored.max_players, 64);
+        assert_eq!(stored.mode, "PvP");
+        assert_eq!(stored.cluster_id, "Cluster-B");
     }
 }
 

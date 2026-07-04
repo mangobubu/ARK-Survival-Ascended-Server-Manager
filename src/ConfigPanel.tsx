@@ -343,6 +343,8 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
   )
 
   const launchArgs = useMemo(() => [
+    `-port=${config.gamePort}`,
+    `-WinLiveMaxPlayers=${config.maxPlayers}`,
     config.useAllCores && '-USEALLAVAILABLECORES',
     config.noBattlEye && '-NoBattlEye',
     config.allowFlyerSpeedLeveling && '-AllowFlyerSpeedLeveling',
@@ -356,12 +358,14 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
     config.gbUsageToForceRestart > 0 && `-GBUsageToForceRestart=${config.gbUsageToForceRestart}`,
     config.serverPlatform && `-ServerPlatform=${config.serverPlatform}`,
     config.activeEvent && `-ActiveEvent=${config.activeEvent}`,
+    config.clusterId && `-clusterid=${config.clusterId}`,
     config.clusterDirOverride && `-ClusterDirOverride="${config.clusterDirOverride}"`,
     config.useDynamicConfig && '-UseDynamicConfig',
     config.useDynamicConfig && config.customDynamicConfigUrl && `-CustomDynamicConfigUrl="${config.customDynamicConfigUrl}"`,
     config.serverGameLog && '-servergamelog',
     config.serverGameLogIncludeTribe && '-ServerRCONOutputTribeLogs',
     config.destroyWildDinos && '-ForceRespawnDinos',
+    (config.whitelist || config.exclusiveJoin) && '-exclusivejoin',
     config.customLaunchArgs,
   ].filter(Boolean).join(' '), [config])
 
@@ -408,7 +412,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
         <Field label="额外启动参数" wide><Input.TextArea rows={3} value={config.customLaunchArgs} onChange={(e) => set('customLaunchArgs', e.target.value)} /></Field>
         <div className="code-preview">
           <span>ShooterGameServer.exe {instance.mapCode}</span>
-          <span>?SessionName={encodeURIComponent(config.sessionName)}?Port={config.gamePort}?RCONPort={config.rconPort}</span>
+          <span>?SessionName={encodeURIComponent(config.sessionName)}?QueryPort={config.queryPort}?RCONPort={config.rconPort}</span>
           <span>{launchArgs}</span>
         </div>
         <Alert type="warning" showIcon title="性能参数没有通用最优值。禁用冬眠等选项可能显著提高资源占用。" />

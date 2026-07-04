@@ -9,6 +9,7 @@ pub struct AppliedConfig {
     pub config_dir: PathBuf,
     pub game_user_settings_path: PathBuf,
     pub game_ini_path: PathBuf,
+    pub engine_ini_path: PathBuf,
     pub launch_arguments: Vec<String>,
 }
 
@@ -23,6 +24,7 @@ pub fn apply_instance_config(
 
     let game_user_settings_path = config_dir.join("GameUserSettings.ini");
     let game_ini_path = config_dir.join("Game.ini");
+    let engine_ini_path = config_dir.join("Engine.ini");
     fs::write(
         &game_user_settings_path,
         render_game_user_settings(instance, config, mods),
@@ -35,11 +37,14 @@ pub fn apply_instance_config(
     })?;
     fs::write(&game_ini_path, render_game_ini(config))
         .map_err(|error| format!("无法写入 Game.ini {}：{error}", game_ini_path.display()))?;
+    fs::write(&engine_ini_path, render_engine_ini(config))
+        .map_err(|error| format!("无法写入 Engine.ini {}：{error}", engine_ini_path.display()))?;
 
     Ok(AppliedConfig {
         config_dir,
         game_user_settings_path,
         game_ini_path,
+        engine_ini_path,
         launch_arguments: build_launch_arguments(instance, config, mods),
     })
 }
@@ -89,7 +94,7 @@ pub fn build_launch_arguments(
     let max_players = number_u32(config, "maxPlayers", instance.max_players);
 
     let mut map_url = format!(
-        "{}?listen?SessionName={}?Port={game_port}?QueryPort={query_port}?RCONPort={rcon_port}?MaxPlayers={max_players}",
+        "{}?listen?SessionName={}?QueryPort={query_port}?RCONPort={rcon_port}",
         instance.map_code,
         url_component(&session_name)
     );
@@ -98,12 +103,6 @@ pub fn build_launch_arguments(
         map_url.push_str(&format!(
             "?ServerPassword={}",
             url_component(&server_password)
-        ));
-    }
-    if !admin_password.is_empty() {
-        map_url.push_str(&format!(
-            "?ServerAdminPassword={}",
-            url_component(&admin_password)
         ));
     }
     if !spectator_password.is_empty() {
@@ -115,8 +114,17 @@ pub fn build_launch_arguments(
     if bool_value(config, "pve", instance.mode == "PvE") {
         map_url.push_str("?ServerPVE=True");
     }
+    if !admin_password.is_empty() {
+        // ASA persists trailing URL options into ServerAdminPassword, so keep it last.
+        map_url.push_str(&format!(
+            "?ServerAdminPassword={}",
+            url_component(&admin_password)
+        ));
+    }
 
     let mut args = vec![map_url];
+    args.push(format!("-port={game_port}"));
+    args.push(format!("-WinLiveMaxPlayers={max_players}"));
     push_flag(&mut args, config, "useAllCores", "-USEALLAVAILABLECORES");
     push_flag(&mut args, config, "noBattlEye", "-NoBattlEye");
     push_flag(
@@ -175,6 +183,9 @@ pub fn build_launch_arguments(
         "-ServerRCONOutputTribeLogs",
     );
     push_flag(&mut args, config, "destroyWildDinos", "-ForceRespawnDinos");
+    if bool_value(config, "whitelist", false) || bool_value(config, "exclusiveJoin", false) {
+        args.push("-exclusivejoin".to_string());
+    }
 
     let gb_restart = number_u32(config, "gbUsageToForceRestart", 0);
     if gb_restart > 0 {
@@ -189,6 +200,11 @@ pub fn build_launch_arguments(
     let active_event = text(config, "activeEvent", "");
     if !active_event.is_empty() {
         args.push(format!("-ActiveEvent={active_event}"));
+    }
+
+    let cluster_id = text(config, "clusterId", &instance.cluster_id);
+    if !cluster_id.is_empty() {
+        args.push(format!("-clusterid={cluster_id}"));
     }
 
     let cluster_dir = text(config, "clusterDirOverride", "ShooterGame/Saved/clusters");
@@ -223,12 +239,21 @@ fn render_game_user_settings(
     mods: &[ModItem],
 ) -> String {
     let active_mods = active_mod_ids(mods).join(",");
+    let cross_transfer = bool_value(config, "crossTransfer", true);
+    let prevent_download_items =
+        !cross_transfer || bool_value(config, "preventDownloadItems", false);
+    let prevent_download_dinos =
+        !cross_transfer || bool_value(config, "preventDownloadDinos", false);
+    let prevent_download_survivors =
+        !cross_transfer || bool_value(config, "preventDownloadSurvivors", false);
+    let prevent_upload_items = !cross_transfer || bool_value(config, "preventUploadItems", false);
+    let prevent_upload_dinos = !cross_transfer || bool_value(config, "preventUploadDinos", false);
+    let prevent_upload_survivors =
+        !cross_transfer || bool_value(config, "preventUploadSurvivors", false);
+    let no_tribute_downloads = !cross_transfer || bool_value(config, "noTributeDownloads", false);
+
     let mut lines = vec![
         "[ServerSettings]".to_string(),
-        format!(
-            "SessionName={}",
-            text(config, "sessionName", &instance.name)
-        ),
         format!("ServerPassword={}", text(config, "serverPassword", "")),
         format!("ServerAdminPassword={}", text(config, "adminPassword", "")),
         format!(
@@ -241,16 +266,8 @@ fn render_game_user_settings(
             number_u16(config, "rconPort", instance.rcon_port)
         ),
         format!(
-            "Port={}",
-            number_u16(config, "gamePort", instance.game_port)
-        ),
-        format!(
-            "QueryPort={}",
-            number_u16(config, "queryPort", instance.query_port)
-        ),
-        format!(
-            "MaxPlayers={}",
-            number_u32(config, "maxPlayers", instance.max_players)
+            "RCONServerGameLogBuffer={}",
+            number_u32(config, "rconBufferSize", 6000)
         ),
         format!(
             "ServerPVE={}",
@@ -261,11 +278,7 @@ fn render_game_user_settings(
             ini_bool(bool_value(config, "hardcore", false))
         ),
         format!(
-            "DisableFriendlyFire={}",
-            ini_bool(bool_value(config, "disableFriendlyFire", false))
-        ),
-        format!(
-            "EnablePVPGamma={}",
+            "EnablePvPGamma={}",
             ini_bool(bool_value(config, "enablePvPGamma", true))
         ),
         format!(
@@ -287,6 +300,51 @@ fn render_game_user_settings(
         format!(
             "AllowFlyerCarryPvE={}",
             ini_bool(bool_value(config, "flyerCarry", true))
+        ),
+        format!(
+            "AllowFlyingStaminaRecovery={}",
+            ini_bool(bool_value(config, "allowFlyingStaminaRecovery", false))
+        ),
+        format!(
+            "AllowCaveBuildingPvE={}",
+            ini_bool(bool_value(config, "allowCaveBuildingPvE", false))
+        ),
+        format!(
+            "AllowCaveBuildingPvP={}",
+            ini_bool(bool_value(config, "allowCaveBuildingPvP", true))
+        ),
+        format!(
+            "KickIdlePlayersPeriod={}",
+            number_u32(config, "kickIdlePlayersPeriod", 3600)
+        ),
+        format!("PreventDownloadItems={}", ini_bool(prevent_download_items)),
+        format!("PreventDownloadDinos={}", ini_bool(prevent_download_dinos)),
+        format!(
+            "PreventDownloadSurvivors={}",
+            ini_bool(prevent_download_survivors)
+        ),
+        format!("PreventUploadItems={}", ini_bool(prevent_upload_items)),
+        format!("PreventUploadDinos={}", ini_bool(prevent_upload_dinos)),
+        format!(
+            "PreventUploadSurvivors={}",
+            ini_bool(prevent_upload_survivors)
+        ),
+        format!("NoTributeDownloads={}", ini_bool(no_tribute_downloads)),
+        format!(
+            "OverrideOfficialDifficulty={}",
+            number_f64(config, "difficulty", 5.0)
+        ),
+        format!(
+            "TributeCharacterExpirationSeconds={}",
+            number_u32(config, "tributeCharacterExpirationSeconds", 0)
+        ),
+        format!(
+            "TributeDinoExpirationSeconds={}",
+            number_u32(config, "tributeDinoExpirationSeconds", 0)
+        ),
+        format!(
+            "TributeItemExpirationSeconds={}",
+            number_u32(config, "tributeItemExpirationSeconds", 0)
         ),
         format!("XPMultiplier={}", number_f64(config, "xpMultiplier", 1.0)),
         format!(
@@ -365,6 +423,151 @@ fn render_game_user_settings(
             "DinoCountMultiplier={}",
             number_f64(config, "dinoCount", 1.0)
         ),
+        format!(
+            "MaxTamedDinos={}",
+            number_u32(config, "maxTamedDinos", 5000)
+        ),
+        format!(
+            "ItemStackSizeMultiplier={}",
+            number_f64(config, "itemStackSizeMultiplier", 1.0)
+        ),
+        format!(
+            "RaidDinoCharacterFoodDrainMultiplier={}",
+            number_f64(config, "raidDinoFoodDrainMultiplier", 1.0)
+        ),
+        format!(
+            "MinimumDinoReuploadInterval={}",
+            number_f64(config, "minimumDinoReuploadInterval", 0.0)
+        ),
+        format!(
+            "PerPlatformMaxStructuresMultiplier={}",
+            number_f64(config, "platformStructureMultiplier", 1.0)
+        ),
+        format!(
+            "TheMaxStructuresInRange={}",
+            number_u32(config, "structureLimit", 10_500)
+        ),
+        format!(
+            "StructurePickupHoldDuration={}",
+            number_f64(config, "structurePickupHoldDuration", 0.5)
+        ),
+        format!(
+            "StructurePickupTimeAfterPlacement={}",
+            number_f64(config, "structurePickupTimeAfterPlacement", 30.0)
+        ),
+        format!(
+            "AutoDestroyOldStructuresMultiplier={}",
+            number_f64(config, "autoDestroyOldStructuresMultiplier", 1.0)
+        ),
+        format!(
+            "AllowAnyoneBabyImprintCuddle={}",
+            ini_bool(bool_value(config, "allowAnyoneBabyImprintCuddle", false))
+        ),
+        format!(
+            "FastDecayUnsnappedCoreStructures={}",
+            ini_bool(bool_value(
+                config,
+                "fastDecayUnsnappedCoreStructures",
+                false
+            ))
+        ),
+        format!(
+            "AllowCryoFridgeOnSaddle={}",
+            ini_bool(bool_value(config, "allowCryoFridgeOnSaddle", false))
+        ),
+        format!(
+            "DisableCryopodEnemyCheck={}",
+            ini_bool(bool_value(config, "disableCryopodEnemyCheck", false))
+        ),
+        format!(
+            "DisableCryopodFridgeRequirement={}",
+            ini_bool(bool_value(config, "disableCryopodFridgeRequirement", false))
+        ),
+        format!(
+            "DisableCryopodCooldown={}",
+            ini_bool(bool_value(config, "disableCryopodCooldown", false))
+        ),
+        format!(
+            "PreventDiseases={}",
+            ini_bool(!bool_value(config, "enableDiseases", true))
+        ),
+        format!(
+            "NonPermanentDiseases={}",
+            ini_bool(bool_value(config, "nonPermanentDiseases", false))
+        ),
+        format!(
+            "TribeNameChangeCooldown={}",
+            number_u32(config, "tribeNameChangeCooldown", 15)
+        ),
+        format!(
+            "AdminLogging={}",
+            ini_bool(bool_value(config, "adminLogging", true))
+        ),
+        format!(
+            "ChatLogging={}",
+            ini_bool(bool_value(config, "chatLogging", true))
+        ),
+    ];
+
+    if is_aberration(instance) {
+        lines.push(format!(
+            "CrossARKAllowForeignDinoDownloads={}",
+            ini_bool(bool_value(
+                config,
+                "crossArkAllowForeignDinoDownloads",
+                false
+            ))
+        ));
+    }
+    if is_lost_colony(instance) {
+        lines.extend([
+            format!(
+                "LimitBunkersPerTribe={}",
+                ini_bool(bool_value(config, "limitBunkersPerTribe", true))
+            ),
+            format!(
+                "AllowBunkersInPreventionZones={}",
+                ini_bool(bool_value(config, "allowBunkersInPreventionZones", false))
+            ),
+            format!(
+                "AllowRidingDinosInsideBunkers={}",
+                ini_bool(bool_value(config, "allowRidingDinosInsideBunkers", true))
+            ),
+            format!(
+                "AllowBunkerModulesAboveGround={}",
+                ini_bool(bool_value(config, "allowBunkerModulesAboveGround", false))
+            ),
+            format!(
+                "AllowDinoAIInsideBunkers={}",
+                ini_bool(bool_value(config, "allowDinoAIInsideBunkers", true))
+            ),
+            format!(
+                "AllowBunkerModulesInPreventionZones={}",
+                ini_bool(bool_value(
+                    config,
+                    "allowBunkerModulesInPreventionZones",
+                    false
+                ))
+            ),
+            format!(
+                "LimitBunkersPerTribeNum={}",
+                number_u32(config, "limitBunkersPerTribeNum", 3)
+            ),
+            format!(
+                "MinDistanceBetweenBunkers={}",
+                number_f64(config, "minDistanceBetweenBunkers", 3000.0)
+            ),
+            format!(
+                "EnemyAccessBunkerHPThreshold={}",
+                number_f64(config, "enemyAccessBunkerHPThreshold", 0.25)
+            ),
+            format!(
+                "BunkerUnderHPThresholdDmgMultiplier={}",
+                number_f64(config, "bunkerUnderHPThresholdDmgMultiplier", 0.05)
+            ),
+        ]);
+    }
+    lines.extend([
         format!("ActiveMods={active_mods}"),
         String::new(),
         "[SessionSettings]".to_string(),
@@ -372,14 +575,15 @@ fn render_game_user_settings(
             "SessionName={}",
             text(config, "sessionName", &instance.name)
         ),
-    ];
-
-    if bool_value(config, "adminLogging", true) {
-        lines.push("AdminLogging=True".to_string());
-    }
-    if bool_value(config, "chatLogging", true) {
-        lines.push("ChatLogging=True".to_string());
-    }
+        format!(
+            "Port={}",
+            number_u16(config, "gamePort", instance.game_port)
+        ),
+        format!(
+            "QueryPort={}",
+            number_u16(config, "queryPort", instance.query_port)
+        ),
+    ]);
     lines.push(String::new());
     lines.join("\r\n")
 }
@@ -387,10 +591,6 @@ fn render_game_user_settings(
 fn render_game_ini(config: &Value) -> String {
     let mut lines = vec![
         "[/Script/ShooterGame.ShooterGameMode]".to_string(),
-        format!(
-            "OverrideOfficialDifficulty={}",
-            number_f64(config, "difficulty", 5.0)
-        ),
         format!(
             "MatingIntervalMultiplier={}",
             number_f64(config, "matingInterval", 1.0)
@@ -436,16 +636,44 @@ fn render_game_ini(config: &Value) -> String {
             number_f64(config, "babyImprintAmountMultiplier", 1.0)
         ),
         format!(
-            "bAllowAnyoneBabyImprintCuddle={}",
-            ini_bool(bool_value(config, "allowAnyoneBabyImprintCuddle", false))
+            "ResourceNoReplenishRadiusPlayers={}",
+            number_f64(config, "resourceNoReplenishRadiusPlayers", 1.0)
         ),
         format!(
-            "PerPlatformMaxStructuresMultiplier={}",
-            number_f64(config, "platformStructureMultiplier", 1.0)
+            "ResourceNoReplenishRadiusStructures={}",
+            number_f64(config, "resourceNoReplenishRadiusStructures", 1.0)
         ),
         format!(
-            "TheMaxStructuresInRange={}",
-            number_u32(config, "structureLimit", 10_500)
+            "CropGrowthSpeedMultiplier={}",
+            number_f64(config, "cropGrowthSpeedMultiplier", 1.0)
+        ),
+        format!(
+            "CropDecaySpeedMultiplier={}",
+            number_f64(config, "cropDecaySpeedMultiplier", 1.0)
+        ),
+        format!(
+            "SupplyCrateLootQualityMultiplier={}",
+            number_f64(config, "supplyCrateLootQualityMultiplier", 1.0)
+        ),
+        format!(
+            "FishingLootQualityMultiplier={}",
+            number_f64(config, "fishingLootQualityMultiplier", 1.0)
+        ),
+        format!(
+            "FuelConsumptionIntervalMultiplier={}",
+            number_f64(config, "fuelConsumptionIntervalMultiplier", 1.0)
+        ),
+        format!(
+            "GlobalSpoilingTimeMultiplier={}",
+            number_f64(config, "globalSpoilingTimeMultiplier", 1.0)
+        ),
+        format!(
+            "GlobalItemDecompositionTimeMultiplier={}",
+            number_f64(config, "globalItemDecompositionTimeMultiplier", 1.0)
+        ),
+        format!(
+            "GlobalCorpseDecompositionTimeMultiplier={}",
+            number_f64(config, "globalCorpseDecompositionTimeMultiplier", 1.0)
         ),
         format!(
             "bDisableStructurePlacementCollision={}",
@@ -456,56 +684,61 @@ fn render_game_ini(config: &Value) -> String {
             number_u32(config, "maxTribeSize", 0)
         ),
         format!(
+            "StructureDamageRepairCooldown={}",
+            number_u32(config, "structureDamageRepairCooldown", 180)
+        ),
+        format!(
+            "LimitGeneratorsNum={}",
+            number_u32(config, "limitGeneratorsNum", 3)
+        ),
+        format!(
+            "LimitGeneratorsRange={}",
+            number_u32(config, "limitGeneratorsRange", 15000)
+        ),
+        format!(
+            "MaxAlliancesPerTribe={}",
+            number_u32(config, "maxAlliancesPerTribe", 0)
+        ),
+        format!(
+            "MaxTribesPerAlliance={}",
+            number_u32(config, "maxTribesPerAlliance", 0)
+        ),
+        format!(
             "bPvEAllowTribeWar={}",
             ini_bool(bool_value(config, "tribeAlliances", true))
         ),
-        format!("bDisableDinoBreeding={}", ini_bool(false)),
+        format!(
+            "bPvEDisableFriendlyFire={}",
+            ini_bool(bool_value(config, "disableFriendlyFire", false))
+        ),
     ];
 
-    let lost_colony_settings = [
-        ("LimitBunkersPerTribe", "limitBunkersPerTribe"),
-        (
-            "AllowBunkersInPreventionZones",
-            "allowBunkersInPreventionZones",
-        ),
-        (
-            "AllowRidingDinosInsideBunkers",
-            "allowRidingDinosInsideBunkers",
-        ),
-        (
-            "AllowBunkerModulesAboveGround",
-            "allowBunkerModulesAboveGround",
-        ),
-        ("AllowDinoAIInsideBunkers", "allowDinoAIInsideBunkers"),
-        (
-            "AllowBunkerModulesInPreventionZones",
-            "allowBunkerModulesInPreventionZones",
-        ),
-    ];
-    for (ini_key, config_key) in lost_colony_settings {
-        lines.push(format!(
-            "{ini_key}={}",
-            ini_bool(bool_value(config, config_key, false))
-        ));
-    }
-    lines.push(format!(
-        "LimitBunkersPerTribeNum={}",
-        number_u32(config, "limitBunkersPerTribeNum", 0)
-    ));
-    lines.push(format!(
-        "MinDistanceBetweenBunkers={}",
-        number_u32(config, "minDistanceBetweenBunkers", 0)
-    ));
-    lines.push(format!(
-        "EnemyAccessBunkerHPThreshold={}",
-        number_f64(config, "enemyAccessBunkerHPThreshold", 0.0)
-    ));
-    lines.push(format!(
-        "BunkerUnderHPThresholdDmgMultiplier={}",
-        number_f64(config, "bunkerUnderHPThresholdDmgMultiplier", 1.0)
-    ));
     lines.push(String::new());
     lines.join("\r\n")
+}
+
+fn render_engine_ini(config: &Value) -> String {
+    let lines = [
+        "[/Script/OnlineSubsystemUtils.IpNetDriver]".to_string(),
+        format!(
+            "NetServerMaxTickRate={}",
+            number_u32(config, "networkTickRate", 30)
+        ),
+        format!(
+            "MaxClientRate={}",
+            number_u32(config, "maxClientRate", 100000)
+        ),
+        String::new(),
+    ];
+    lines.join("\r\n")
+}
+
+fn is_aberration(instance: &ServerInstance) -> bool {
+    instance.map_code == "Aberration_WP"
+}
+
+fn is_lost_colony(instance: &ServerInstance) -> bool {
+    instance.map_code == "LostColony_WP"
 }
 
 fn active_mod_ids(mods: &[ModItem]) -> Vec<String> {
@@ -607,6 +840,20 @@ mod tests {
     }
 
     #[test]
+    fn server_admin_password_is_last_map_url_option() {
+        let instance = test_instance(Path::new("D:\\ASA"));
+        let config = json!({
+            "adminPassword": "admin.pass",
+            "pve": true
+        });
+
+        let args = build_launch_arguments(&instance, &config, &[]);
+
+        assert!(args[0].contains("?ServerPVE=True?ServerAdminPassword=admin.pass"));
+        assert!(args[0].ends_with("?ServerAdminPassword=admin.pass"));
+    }
+
+    #[test]
     fn 生成启动参数包含地图端口与模组() {
         let instance = test_instance(Path::new("D:\\ASA"));
         let config = json!({
@@ -616,6 +863,8 @@ mod tests {
             "rconPort": 32331,
             "maxPlayers": 20,
             "useAllCores": true,
+            "clusterId": "Cluster-Z",
+            "whitelist": true,
             "customLaunchArgs": "-culture=zh"
         });
         let mods = vec![ModItem {
@@ -629,8 +878,13 @@ mod tests {
 
         let args = build_launch_arguments(&instance, &config, &mods);
         assert!(args[0].contains("TheIsland_WP?listen"));
-        assert!(args[0].contains("Port=7788"));
+        assert!(!args[0].contains("Port=7788"));
+        assert!(!args[0].contains("MaxPlayers=20"));
+        assert!(args.iter().any(|arg| arg == "-port=7788"));
+        assert!(args.iter().any(|arg| arg == "-WinLiveMaxPlayers=20"));
         assert!(args.iter().any(|arg| arg == "-USEALLAVAILABLECORES"));
+        assert!(args.iter().any(|arg| arg == "-clusterid=Cluster-Z"));
+        assert!(args.iter().any(|arg| arg == "-exclusivejoin"));
         assert!(args.iter().any(|arg| arg == "-mods=928708"));
     }
 
@@ -643,5 +897,208 @@ mod tests {
         let applied = apply_instance_config(&instance, &config, &[]).expect("写入配置成功");
         assert!(applied.game_user_settings_path.is_file());
         assert!(applied.game_ini_path.is_file());
+        assert!(applied.engine_ini_path.is_file());
+
+        let game_user_settings =
+            fs::read_to_string(applied.game_user_settings_path).expect("read GameUserSettings.ini");
+        let server_settings_section = game_user_settings
+            .split("[SessionSettings]")
+            .next()
+            .unwrap_or_default();
+        assert!(!server_settings_section.contains("MaxPlayers="));
+        assert!(!game_user_settings.contains("[/Script/Engine.GameSession]"));
+        assert!(!game_user_settings.contains("MaxPlayers=30"));
+        assert!(
+            applied
+                .launch_arguments
+                .iter()
+                .any(|arg| arg == "-WinLiveMaxPlayers=30")
+        );
+    }
+
+    #[test]
+    fn 写入扩展配置到正确文件() {
+        let instance = test_instance(Path::new("D:\\ASA"));
+        let mut config = json!({
+            "clusterId": "Cluster-Exact",
+            "crossTransfer": false,
+            "preventDownloadItems": false,
+            "preventDownloadDinos": false,
+            "preventDownloadSurvivors": false,
+            "preventUploadItems": false,
+            "preventUploadDinos": false,
+            "preventUploadSurvivors": false,
+            "noTributeDownloads": false,
+            "rconBufferSize": 9000,
+            "kickIdlePlayersPeriod": 120,
+            "allowFlyingStaminaRecovery": true,
+            "allowCaveBuildingPvE": true,
+            "allowCaveBuildingPvP": false,
+            "enableIdlePlayerKick": true,
+            "tributeCharacterExpirationSeconds": 3600,
+            "tributeDinoExpirationSeconds": 7200,
+            "tributeItemExpirationSeconds": 1800,
+            "crossArkAllowForeignDinoDownloads": true,
+            "resourceNoReplenishRadiusPlayers": 2.5,
+            "resourceNoReplenishRadiusStructures": 3.5,
+            "maxTamedDinos": 1234,
+            "cropGrowthSpeedMultiplier": 4.5,
+            "cropDecaySpeedMultiplier": 5.5,
+            "supplyCrateLootQualityMultiplier": 2.25,
+            "fishingLootQualityMultiplier": 1.75,
+            "fuelConsumptionIntervalMultiplier": 6.5,
+            "itemStackSizeMultiplier": 7.5,
+            "globalSpoilingTimeMultiplier": 8.5,
+            "globalItemDecompositionTimeMultiplier": 9.5,
+            "globalCorpseDecompositionTimeMultiplier": 10.5,
+            "raidDinoFoodDrainMultiplier": 0.75,
+            "minimumDinoReuploadInterval": 1800
+        });
+        let extra_config = json!({
+            "adminLogging": false,
+            "chatLogging": false,
+            "structureDamageRepairCooldown": 77,
+            "structurePickupTimeAfterPlacement": 88,
+            "structurePickupHoldDuration": 1.5,
+            "autoDestroyOldStructuresMultiplier": 2.25,
+            "limitGeneratorsNum": 4,
+            "limitGeneratorsRange": 500,
+            "tribeNameChangeCooldown": 3,
+            "maxAlliancesPerTribe": 2,
+            "maxTribesPerAlliance": 6,
+            "disableFriendlyFire": true,
+            "fastDecayUnsnappedCoreStructures": true,
+            "allowCryoFridgeOnSaddle": true,
+            "disableCryopodEnemyCheck": true,
+            "disableCryopodFridgeRequirement": true,
+            "disableCryopodCooldown": true,
+            "enableDiseases": false,
+            "nonPermanentDiseases": true,
+            "networkTickRate": 45,
+            "maxClientRate": 150000
+        });
+        config
+            .as_object_mut()
+            .expect("测试配置是对象")
+            .extend(extra_config.as_object().expect("扩展配置是对象").clone());
+
+        let game_user_settings = render_game_user_settings(&instance, &config, &[]);
+        let game_ini = render_game_ini(&config);
+        let engine_ini = render_engine_ini(&config);
+        let server_settings_section = game_user_settings
+            .split("[SessionSettings]")
+            .next()
+            .unwrap_or_default();
+
+        for expected in [
+            "RCONServerGameLogBuffer=9000",
+            "AllowFlyingStaminaRecovery=True",
+            "AllowCaveBuildingPvE=True",
+            "AllowCaveBuildingPvP=False",
+            "KickIdlePlayersPeriod=120",
+            "PreventDownloadItems=True",
+            "PreventDownloadDinos=True",
+            "PreventDownloadSurvivors=True",
+            "PreventUploadItems=True",
+            "PreventUploadDinos=True",
+            "PreventUploadSurvivors=True",
+            "NoTributeDownloads=True",
+            "OverrideOfficialDifficulty=5",
+            "TributeCharacterExpirationSeconds=3600",
+            "TributeDinoExpirationSeconds=7200",
+            "TributeItemExpirationSeconds=1800",
+            "MaxTamedDinos=1234",
+            "ItemStackSizeMultiplier=7.5",
+            "RaidDinoCharacterFoodDrainMultiplier=0.75",
+            "MinimumDinoReuploadInterval=1800",
+            "StructurePickupHoldDuration=1.5",
+            "StructurePickupTimeAfterPlacement=88",
+            "AutoDestroyOldStructuresMultiplier=2.25",
+            "FastDecayUnsnappedCoreStructures=True",
+            "AllowCryoFridgeOnSaddle=True",
+            "DisableCryopodEnemyCheck=True",
+            "DisableCryopodFridgeRequirement=True",
+            "DisableCryopodCooldown=True",
+            "PreventDiseases=True",
+            "NonPermanentDiseases=True",
+            "TribeNameChangeCooldown=3",
+            "AdminLogging=False",
+            "ChatLogging=False",
+        ] {
+            assert!(
+                server_settings_section.contains(expected),
+                "ServerSettings 缺少 {expected}"
+            );
+        }
+
+        for expected in [
+            "ResourceNoReplenishRadiusPlayers=2.5",
+            "ResourceNoReplenishRadiusStructures=3.5",
+            "CropGrowthSpeedMultiplier=4.5",
+            "CropDecaySpeedMultiplier=5.5",
+            "SupplyCrateLootQualityMultiplier=2.25",
+            "FishingLootQualityMultiplier=1.75",
+            "FuelConsumptionIntervalMultiplier=6.5",
+            "GlobalSpoilingTimeMultiplier=8.5",
+            "GlobalItemDecompositionTimeMultiplier=9.5",
+            "GlobalCorpseDecompositionTimeMultiplier=10.5",
+            "StructureDamageRepairCooldown=77",
+            "LimitGeneratorsNum=4",
+            "LimitGeneratorsRange=500",
+            "MaxAlliancesPerTribe=2",
+            "MaxTribesPerAlliance=6",
+            "bPvEDisableFriendlyFire=True",
+        ] {
+            assert!(game_ini.contains(expected), "Game.ini 缺少 {expected}");
+        }
+
+        assert!(engine_ini.contains("[/Script/OnlineSubsystemUtils.IpNetDriver]"));
+        assert!(engine_ini.contains("NetServerMaxTickRate=45"));
+        assert!(engine_ini.contains("MaxClientRate=150000"));
+        assert!(!game_ini.contains("PreventDownloadItems="));
+        assert!(!game_ini.contains("AllowCryoFridgeOnSaddle="));
+        assert!(!game_ini.contains("EnableDiseases="));
+        assert!(!game_user_settings.contains("NetServerMaxTickRate="));
+        assert!(!server_settings_section.contains("CrossARKAllowForeignDinoDownloads="));
+        assert!(!server_settings_section.contains("LimitBunkersPerTribe="));
+        assert!(!server_settings_section.contains("AllowBunkerModulesAboveGround="));
+
+        let mut aberration = instance.clone();
+        aberration.map = "Aberration".to_string();
+        aberration.map_code = "Aberration_WP".to_string();
+        let aberration_settings = render_game_user_settings(&aberration, &config, &[]);
+        let aberration_server_settings = aberration_settings
+            .split("[SessionSettings]")
+            .next()
+            .unwrap_or_default();
+        assert!(aberration_server_settings.contains("CrossARKAllowForeignDinoDownloads=True"));
+        assert!(!aberration_server_settings.contains("LimitBunkersPerTribe="));
+
+        let mut lost_colony = instance;
+        lost_colony.map = "Lost Colony".to_string();
+        lost_colony.map_code = "LostColony_WP".to_string();
+        let lost_colony_settings = render_game_user_settings(&lost_colony, &config, &[]);
+        let lost_colony_server_settings = lost_colony_settings
+            .split("[SessionSettings]")
+            .next()
+            .unwrap_or_default();
+        for expected in [
+            "LimitBunkersPerTribe=True",
+            "AllowBunkersInPreventionZones=False",
+            "AllowRidingDinosInsideBunkers=True",
+            "AllowBunkerModulesAboveGround=False",
+            "AllowDinoAIInsideBunkers=True",
+            "AllowBunkerModulesInPreventionZones=False",
+            "LimitBunkersPerTribeNum=3",
+            "MinDistanceBetweenBunkers=3000",
+            "EnemyAccessBunkerHPThreshold=0.25",
+            "BunkerUnderHPThresholdDmgMultiplier=0.05",
+        ] {
+            assert!(
+                lost_colony_server_settings.contains(expected),
+                "Lost Colony ServerSettings 缺少 {expected}"
+            );
+        }
+        assert!(!lost_colony_server_settings.contains("CrossARKAllowForeignDinoDownloads="));
     }
 }

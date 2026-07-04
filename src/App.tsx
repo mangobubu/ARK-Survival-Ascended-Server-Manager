@@ -262,7 +262,7 @@ function LogConsole({
       <div className={`log-console${showInstance ? '' : ' log-console--server'}`} ref={consoleRef}>
         {lines.length === 0 ? <div className="empty-log">{emptyText}</div> : lines.map((line) => (
           <div className={`log-line log-line--${line.level}`} key={line.id}>
-            <span>[{line.time}]</span>{showInstance && <b>[{line.instance}]</b>}<span>{line.message}</span>
+            <span>[{line.time}]</span>{showInstance && <b title={line.instance}>[{line.instance}]</b>}<span>{line.message}</span>
           </div>
         ))}
       </div>
@@ -720,7 +720,8 @@ export default function App() {
       return
     }
     try {
-      await saveInstanceConfig(selected.id, nextConfig, mods)
+      const updated = await saveInstanceConfig(selected.id, nextConfig, mods)
+      replaceInstance(updated)
       setConfig(nextConfig)
       setDirty(false)
       await refreshLogs()
@@ -741,16 +742,21 @@ export default function App() {
     modal.confirm({
       title: `保存并应用 ${selected.name}？`,
       icon: <ReloadOutlined className="confirm-blue-icon" />,
-      content: selected.status === 'running' ? '运行中的实例会先保存世界并重启。' : '配置会写入真实 ARK 配置文件。',
-      okText: selected.status === 'running' ? '保存并重启' : '保存并应用',
+      content: selected.status === 'running' ? '运行中的实例会先保存世界并重启。' : '配置会写入真实 ARK 配置文件，然后启动实例。',
+      okText: '保存并重启',
       cancelText: '取消',
       onOk: async () => {
-        const updated = await applyInstanceConfig(selected.id, nextConfig, mods)
-        replaceInstance(updated)
-        setConfig(nextConfig)
-        setDirty(false)
-        await refreshLogs()
-        messageApi.success('配置已应用')
+        try {
+          const updated = await applyInstanceConfig(selected.id, nextConfig, mods)
+          replaceInstance(updated)
+          setConfig(nextConfig)
+          setDirty(false)
+          await refreshLogs()
+          messageApi.success('配置已应用并已请求重启')
+        } catch (error) {
+          messageApi.error(`应用并重启失败：${String(error)}`)
+          throw error
+        }
       },
     })
   }

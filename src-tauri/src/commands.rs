@@ -186,22 +186,22 @@ pub fn save_instance_config(
     instance_id: String,
     config: Value,
     mods: Vec<ModItem>,
-) -> Result<(), String> {
-    let instance = runtime.get_instance(&instance_id)?;
+) -> Result<ServerInstance, String> {
     let config = normalize_required_rcon_config(config)?;
-    runtime.save_config_and_mods(&instance_id, config.clone(), mods.clone())?;
+    let instance = runtime.save_config_and_mods(&instance_id, config.clone(), mods.clone())?;
     let applied = ark_config::apply_instance_config(&instance, &config, &mods)?;
     runtime.add_log(
         &instance.name,
         "success",
         &format!(
-            "配置已写入 ARK 配置文件：{}、{}，启动参数 {} 项",
+            "配置已写入 ARK 配置文件：{}、{}、{}，启动参数 {} 项",
             applied.game_user_settings_path.to_string_lossy(),
             applied.game_ini_path.to_string_lossy(),
+            applied.engine_ini_path.to_string_lossy(),
             applied.launch_arguments.len()
         ),
     )?;
-    Ok(())
+    Ok(instance)
 }
 
 #[tauri::command]
@@ -214,12 +214,7 @@ pub async fn apply_instance_config(
 ) -> Result<ServerInstance, String> {
     let runtime = runtime.inner().clone();
     save_config_for_runtime(&runtime, &instance_id, config, mods)?;
-    let instance = runtime.get_instance(&instance_id)?;
-    if instance.status == ServerStatus::Running {
-        restart_instance_inner(app, runtime, instance_id).await
-    } else {
-        Ok(instance)
-    }
+    restart_instance_inner(app, runtime, instance_id).await
 }
 
 #[tauri::command]
@@ -320,7 +315,10 @@ pub async fn install_or_update_instance(
             instance.version_state = "已安装/已更新".to_string();
             instance.status = ServerStatus::Stopped;
             instance.last_error = None;
-            let updated = runtime.upsert_instance(instance.clone())?;
+            let mut updated = runtime.upsert_instance(instance.clone())?;
+            let config = normalize_required_rcon_config(runtime.get_config(&updated.id)?)?;
+            let mods = runtime.get_mods(&updated.id)?;
+            updated = save_config_for_runtime(&runtime, &updated.id, config, mods)?;
             emit_instance_log(
                 &app,
                 &runtime,
@@ -520,23 +518,23 @@ fn save_config_for_runtime(
     instance_id: &str,
     config: Value,
     mods: Vec<ModItem>,
-) -> Result<(), String> {
-    let instance = runtime.get_instance(instance_id)?;
+) -> Result<ServerInstance, String> {
     let config = normalize_required_rcon_config(config)?;
-    runtime.save_config_and_mods(instance_id, config.clone(), mods.clone())?;
+    let instance = runtime.save_config_and_mods(instance_id, config.clone(), mods.clone())?;
     let applied = ark_config::apply_instance_config(&instance, &config, &mods)?;
     runtime.add_log(
         &instance.name,
         "success",
         &format!(
-            "配置已保存：{}、{}，配置目录：{}，启动参数 {} 项",
+            "配置已保存：{}、{}、{}，配置目录：{}，启动参数 {} 项",
             applied.game_user_settings_path.to_string_lossy(),
             applied.game_ini_path.to_string_lossy(),
+            applied.engine_ini_path.to_string_lossy(),
             applied.config_dir.to_string_lossy(),
             applied.launch_arguments.len()
         ),
     )?;
-    Ok(())
+    Ok(instance)
 }
 
 #[cfg(windows)]
@@ -828,7 +826,7 @@ async fn start_instance_inner(
     }
     let config = normalize_required_rcon_config(runtime.get_config(&instance_id)?)?;
     let mods = runtime.get_mods(&instance_id)?;
-    save_config_for_runtime(&runtime, &instance_id, config.clone(), mods.clone())?;
+    let instance = save_config_for_runtime(&runtime, &instance_id, config.clone(), mods.clone())?;
     let executable = ark_config::server_executable(&instance).ok_or_else(|| {
         format!(
             "未找到 ASA 服务端可执行文件，请先安装/更新实例：{}",

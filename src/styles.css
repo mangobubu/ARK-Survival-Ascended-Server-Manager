@@ -103,6 +103,7 @@ button, input, textarea { font: inherit; }
 
 .instance-list-card .ant-table { background: transparent; }
 .instance-list-card .ant-table-wrapper { padding: 0 8px 8px; }
+.instance-list-card .ant-table-body { overflow-y: auto !important; }
 .instance-list-card .ant-table-cell { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .instance-list-card .ant-table-thead > tr > th { height: 36px; padding-block: 6px; color: #8ca0b2; font-size: 12px; font-weight: 500; }
 .instance-list-card .ant-table-tbody > tr > td { height: 49px; padding-block: 7px; color: #c7d5e1; font-size: 12px; cursor: pointer; }
@@ -220,9 +221,13 @@ button, input, textarea { font: inherit; }
 .log-console::-webkit-scrollbar-track { background: rgba(3, 15, 26, .55); }
 .log-console::-webkit-scrollbar-thumb { border-radius: 6px; background: #1a4d6d; }
 .log-console::-webkit-scrollbar-thumb:hover { background: #2374a1; }
-.log-line { display: grid; grid-template-columns: 74px 74px 1fr; gap: 3px; min-width: 500px; }
+.log-line { display: grid; grid-template-columns: 74px minmax(120px, 160px) 1fr; gap: 6px; min-width: 560px; }
 .log-console--server .log-line { grid-template-columns: 74px 1fr; min-width: 420px; }
+.log-line > span,
+.log-line b { min-width: 0; white-space: nowrap; }
 .log-line b { color: #15ca70; font-weight: 500; }
+.log-line > b { overflow: hidden; text-overflow: ellipsis; }
+.log-line > span:last-child { overflow: visible; white-space: pre; }
 .log-line--error b, .log-line--error > span:last-child { color: #ff3158; }
 .log-line--warn b, .log-line--warn > span:last-child { color: #ffb020; }
 .log-line--info b, .log-line--info > span:last-child { color: #8ca2b4; }
