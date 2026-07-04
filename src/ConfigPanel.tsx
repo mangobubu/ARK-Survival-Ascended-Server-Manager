@@ -37,6 +37,7 @@ import {
   Tooltip,
   Typography,
 } from 'antd'
+import { activeEventOptions } from './data'
 import type { ModItem, ServerConfig, ServerInstance } from './types'
 
 const { Text, Paragraph } = Typography
@@ -278,8 +279,13 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
         <Field label="取消冷冻舱冷却"><Switch checked={config.disableCryopodCooldown} onChange={(v) => set('disableCryopodCooldown', v)} /></Field>
       </SectionCard>
 
-      <SectionCard title="生物、飞行与冷冻舱" icon={<BugOutlined />} note="GameUserSettings.ini / 启动参数">
-        <Field label="飞行生物速度升级"><Switch checked={config.allowFlyerSpeedLeveling} onChange={(v) => set('allowFlyerSpeedLeveling', v)} /></Field>
+      <SectionCard title="生物、飞行与冷冻舱" icon={<BugOutlined />} note="GameUserSettings.ini / Game.ini / 启动参数">
+        <Field label="玩家/非飞行生物速度升级" tip="bAllowSpeedLeveling；允许玩家与非飞行生物将属性点投入移动速度，ASA 中飞行生物速度升级也依赖此开关">
+          <Switch checked={config.allowSpeedLeveling} onChange={(v) => set('allowSpeedLeveling', v)} />
+        </Field>
+        <Field label="飞行生物速度升级" tip="AllowFlyerSpeedLeveling；ASA 中还需要同时开启“玩家/非飞行生物速度升级”才会生效">
+          <Switch checked={config.allowFlyerSpeedLeveling} onChange={(v) => set('allowFlyerSpeedLeveling', v)} />
+        </Field>
         <Field label="强制允许洞穴飞行"><Switch checked={config.forceAllowCaveFlyers} onChange={(v) => set('forceAllowCaveFlyers', v)} /></Field>
         <Field label="骑乘飞行生物恢复耐力"><Switch checked={config.allowFlyingStaminaRecovery} onChange={(v) => set('allowFlyingStaminaRecovery', v)} /></Field>
         <Field label="突袭生物食物消耗"><NumberField value={config.raidDinoFoodDrainMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('raidDinoFoodDrainMultiplier', v)} addonAfter="x" /></Field>
@@ -400,7 +406,15 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
 
       <SectionCard title="平台、事件与动态配置" icon={<SettingOutlined />} note="ASA 启动参数">
         <Field label="连接平台"><Select value={config.serverPlatform} onChange={(v) => set('serverPlatform', v)} options={[{ label: '全部平台', value: 'ALL' }, { label: 'Steam / PC', value: 'PC' }, { label: 'PlayStation 5', value: 'PS5' }, { label: 'Xbox Series', value: 'XSX' }, { label: 'Windows Store', value: 'WINGDK' }]} /></Field>
-        <Field label="激活活动"><Input value={config.activeEvent} onChange={(e) => set('activeEvent', e.target.value)} placeholder="留空表示不启用" /></Field>
+        <Field label="激活活动" tip="对应 ASA 启动参数 -ActiveEvent=<eventname>；留空不追加参数，None 会显式禁用默认活动引用。ARK Wiki 标注目前仅 WinterWonderland 仍完整可用，已废弃活动不可新选。">
+          <Select
+            value={config.activeEvent}
+            onChange={(value) => set('activeEvent', value)}
+            options={activeEventOptions}
+            showSearch
+            optionFilterProp="label"
+          />
+        </Field>
         <Field label="内存强制重启阈值"><NumberField value={config.gbUsageToForceRestart} min={0} max={512} onChange={(v) => set('gbUsageToForceRestart', v)} addonAfter="GB" /></Field>
         <Field label="启用结构停滞网格"><Switch checked={config.useStructureStasisGrid} onChange={(v) => set('useStructureStasisGrid', v)} /></Field>
         <Field label="持续更新骨骼网格"><Switch checked={config.alwaysTickDedicatedSkeletalMeshes} onChange={(v) => set('alwaysTickDedicatedSkeletalMeshes', v)} /></Field>

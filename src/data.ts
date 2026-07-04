@@ -25,6 +25,37 @@ export const serverMapOptions = [
   { name: 'Lost Colony', zhName: '失落殖民地', code: 'LostColony_WP' },
 ]
 
+export const activeEventOptions = [
+  {
+    label: '推荐选项',
+    options: [
+      { label: '不启用（不追加 -ActiveEvent）', value: '' },
+      { label: 'None - 禁用默认活动引用', value: 'None' },
+      { label: 'WinterWonderland - Winter Wonderland 7（完整可用）', value: 'WinterWonderland' },
+    ],
+  },
+  {
+    label: '兼容保留（可能仅活动色彩仍有效）',
+    options: [
+      { label: 'Easter - Eggcellent Adventure 7', value: 'Easter' },
+      { label: 'FearEvolved - Fear Evolved 6', value: 'FearEvolved' },
+      { label: 'TurkeyTrial - Turkey Trial 6', value: 'TurkeyTrial' },
+      { label: 'vday - Valentine’s EVO Event', value: 'vday' },
+      { label: 'Summer - Summer EVO', value: 'Summer' },
+      { label: 'PAX - PAX Party', value: 'PAX' },
+    ],
+  },
+  {
+    label: '已废弃（不可新选，仅用于识别旧配置）',
+    options: [
+      { label: 'ark7th - ARK 7th Anniversary（已废弃）', value: 'ark7th', disabled: true },
+      { label: 'ARKaeology - ARKaeology（已废弃）', value: 'ARKaeology', disabled: true },
+      { label: 'birthday - ARK 5th Anniversary（已废弃）', value: 'birthday', disabled: true },
+      { label: 'ExtinctionChronicles - Extinction Chronicles（已废弃）', value: 'ExtinctionChronicles', disabled: true },
+    ],
+  },
+]
+
 export const initialLogs: LogLine[] = []
 
 export const initialMods: ModItem[] = []
@@ -52,7 +83,7 @@ export const defaultConfig: ServerConfig = {
   structurePickupTimeAfterPlacement: 30, structurePickupHoldDuration: 0.5, autoDestroyOldStructuresMultiplier: 1,
   fastDecayUnsnappedCoreStructures: false, limitGeneratorsNum: 3, limitGeneratorsRange: 15000,
   allowCryoFridgeOnSaddle: false, disableCryopodEnemyCheck: false, disableCryopodFridgeRequirement: false, disableCryopodCooldown: false,
-  allowFlyerSpeedLeveling: false, forceAllowCaveFlyers: false, allowFlyingStaminaRecovery: false, raidDinoFoodDrainMultiplier: 1,
+  allowSpeedLeveling: false, allowFlyerSpeedLeveling: false, forceAllowCaveFlyers: false, allowFlyingStaminaRecovery: false, raidDinoFoodDrainMultiplier: 1,
   whitelist: false, exclusiveJoin: false, preventDownloadItems: false, preventDownloadDinos: false, preventDownloadSurvivors: false,
   preventUploadItems: false, preventUploadDinos: false, preventUploadSurvivors: false, noTributeDownloads: false,
   minimumDinoReuploadInterval: 0, tributeCharacterExpirationSeconds: 0, tributeDinoExpirationSeconds: 0, tributeItemExpirationSeconds: 0,

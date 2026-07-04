@@ -234,6 +234,7 @@ export interface ServerConfig {
   disableCryopodEnemyCheck: boolean
   disableCryopodFridgeRequirement: boolean
   disableCryopodCooldown: boolean
+  allowSpeedLeveling: boolean
   allowFlyerSpeedLeveling: boolean
   forceAllowCaveFlyers: boolean
   allowFlyingStaminaRecovery: boolean

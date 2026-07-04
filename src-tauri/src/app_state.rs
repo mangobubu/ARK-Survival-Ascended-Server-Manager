@@ -930,6 +930,7 @@ fn default_config_from_payload(payload: &AddInstancePayload, instance: &ServerIn
     map.insert("disableCryopodEnemyCheck".to_string(), json!(false));
     map.insert("disableCryopodFridgeRequirement".to_string(), json!(false));
     map.insert("disableCryopodCooldown".to_string(), json!(false));
+    map.insert("allowSpeedLeveling".to_string(), json!(false));
     map.insert("allowFlyerSpeedLeveling".to_string(), json!(false));
     map.insert("forceAllowCaveFlyers".to_string(), json!(false));
     map.insert("allowFlyingStaminaRecovery".to_string(), json!(false));

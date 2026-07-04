@@ -680,6 +680,10 @@ fn render_game_ini(config: &Value) -> String {
             ini_bool(bool_value(config, "disablePlacementCollision", false))
         ),
         format!(
+            "bAllowSpeedLeveling={}",
+            ini_bool(bool_value(config, "allowSpeedLeveling", false))
+        ),
+        format!(
             "MaxNumberOfPlayersInTribe={}",
             number_u32(config, "maxTribeSize", 0)
         ),
@@ -972,6 +976,7 @@ mod tests {
             "disableCryopodEnemyCheck": true,
             "disableCryopodFridgeRequirement": true,
             "disableCryopodCooldown": true,
+            "allowSpeedLeveling": true,
             "enableDiseases": false,
             "nonPermanentDiseases": true,
             "networkTickRate": 45,
@@ -1045,6 +1050,7 @@ mod tests {
             "StructureDamageRepairCooldown=77",
             "LimitGeneratorsNum=4",
             "LimitGeneratorsRange=500",
+            "bAllowSpeedLeveling=True",
             "MaxAlliancesPerTribe=2",
             "MaxTribesPerAlliance=6",
             "bPvEDisableFriendlyFire=True",

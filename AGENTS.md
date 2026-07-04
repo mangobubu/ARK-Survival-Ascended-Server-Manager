@@ -4,7 +4,9 @@
 
 2. 这是项目是 ARK: Survival Ascended 的服务端项目，不是 Ark: Survival Evolved，一定不要搞混
 
-3. git 提交消息必须使用中文，要详细，且必须遵守以下示例格式（每个功能说明都需要换行处理）：
+3. 所有的配置参数，需要参考 https://ark.wiki.gg/wiki/Server_configuration 
+
+4. git 提交消息必须使用中文，要详细，且必须遵守以下示例格式（每个功能说明都需要换行处理）：
 
    ```
     feat: 新增开启云同步服务时的隐私授权说明书弹窗
@@ -89,6 +91,7 @@
 - 提供代码改写建议（未经许可禁止自动修改代码）:
   - 搜索命令: `ast-grep -p "import $$ from 'node:path'" src --lang ts,tsx`
   - 建议替换为: `import $$ from 'pathe'`
+- 当需要使用python的时候，执行本机 Python 直接走提权调用
 
 ### 搜索优化规范 (fd/rg/sg) 与 Windows PowerShell 降级方案
 

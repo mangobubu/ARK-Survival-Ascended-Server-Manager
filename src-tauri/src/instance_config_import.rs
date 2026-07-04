@@ -480,6 +480,7 @@ fn read_game_ini(document: &IniDocument, config: &mut Map<String, Value>) {
             "bDisableStructurePlacementCollision",
             "disablePlacementCollision",
         ),
+        ("bAllowSpeedLeveling", "allowSpeedLeveling"),
         ("bPvEAllowTribeWar", "tribeAlliances"),
         ("bPvEDisableFriendlyFire", "disableFriendlyFire"),
     ] {
@@ -994,6 +995,7 @@ MaxPlayers=42
 ResourceNoReplenishRadiusPlayers=2.5
 MatingIntervalMultiplier=0.2
 bDisableStructurePlacementCollision=True
+bAllowSpeedLeveling=True
 "#,
         )
         .expect("写入 Game.ini");
@@ -1043,6 +1045,7 @@ MaxClientRate=150000
         assert_eq!(preview.config["limitBunkersPerTribeNum"], json!(3));
         assert_eq!(preview.config["difficulty"], json!(7.0));
         assert_eq!(preview.config["disablePlacementCollision"], json!(true));
+        assert_eq!(preview.config["allowSpeedLeveling"], json!(true));
     }
 
     #[test]
