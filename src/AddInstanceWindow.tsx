@@ -11,7 +11,6 @@ import {
   PlusOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons'
-import { emitTo } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { Button, Form, Input, InputNumber, Radio, Select, Space, Switch, Tooltip, Typography, message } from 'antd'
@@ -24,7 +23,6 @@ import type {
   InstanceCreatedEvent,
   InstancePortKind,
 } from './types'
-import { ADD_INSTANCE_CREATED_EVENT, MAIN_WINDOW_LABEL } from './windowEvents'
 
 const { Text, Title } = Typography
 
@@ -367,8 +365,6 @@ export default function AddInstanceWindow({ initialParams, onCreated, onClose }:
       const eventPayload: InstanceCreatedEvent = { instance, autoInstall: payload.autoInstall }
       if (onCreated) {
         onCreated(eventPayload)
-      } else if (isTauriRuntime()) {
-        await emitTo(MAIN_WINDOW_LABEL, ADD_INSTANCE_CREATED_EVENT, eventPayload)
       }
       messageApi.success('实例已创建')
       window.setTimeout(() => {

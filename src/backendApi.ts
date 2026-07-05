@@ -20,23 +20,87 @@ import type {
   SteamCmdProgress,
 } from './types'
 
+const WEB_AUTH_TOKEN_KEY = 'asa-web-auth-token'
+
+export interface WebAuthStatus {
+  configured: boolean
+}
+
+export function getWebAuthToken() {
+  return window.localStorage.getItem(WEB_AUTH_TOKEN_KEY)
+}
+
+export function setWebAuthToken(token: string) {
+  window.localStorage.setItem(WEB_AUTH_TOKEN_KEY, token)
+}
+
+export function clearWebAuthToken() {
+  window.localStorage.removeItem(WEB_AUTH_TOKEN_KEY)
+}
+
+export function getAuthorizedWebUrl(path: string) {
+  const token = getWebAuthToken()
+  const url = new URL(path, `${getWebApiBaseUrl()}/`)
+  if (token) url.searchParams.set('token', token)
+  return url.toString()
+}
+
+async function parseWebApiPayload<T>(response: Response, fallbackError: string) {
+  const payload = await response.json().catch(() => null) as { ok?: boolean; data?: T; error?: string } | null
+  if (!response.ok || !payload?.ok) {
+    if (response.status === 401) clearWebAuthToken()
+    throw new Error(payload?.error ?? fallbackError)
+  }
+  return payload.data as T
+}
+
+export async function getWebAuthStatus() {
+  const response = await fetch(`${getWebApiBaseUrl()}/api/auth/status`)
+  return parseWebApiPayload<WebAuthStatus>(response, '无法读取 Web 鉴权状态')
+}
+
+export async function loginWeb(username: string, password: string) {
+  const response = await fetch(`${getWebApiBaseUrl()}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  const data = await parseWebApiPayload<{ token: string }>(response, 'Web 登录失败')
+  setWebAuthToken(data.token)
+  return data
+}
+
+export async function logoutWeb() {
+  const token = getWebAuthToken()
+  try {
+    if (token) {
+      await fetch(`${getWebApiBaseUrl()}/api/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+    }
+  } finally {
+    clearWebAuthToken()
+  }
+}
+
 async function invokeCommand<T>(command: string, args: Record<string, unknown> = {}) {
   if (isTauriRuntime()) return invoke<T>(command, args)
   return webInvoke<T>(command, args)
 }
 
 async function webInvoke<T>(command: string, args: Record<string, unknown>) {
+  const token = getWebAuthToken()
   const response = await fetch(`${getWebApiBaseUrl()}/api/invoke`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify({ command, args }),
   })
 
-  const payload = await response.json().catch(() => null) as { ok?: boolean; data?: T; error?: string } | null
-  if (!response.ok || !payload?.ok) {
-    throw new Error(payload?.error ?? `Web API 调用失败：${command}`)
-  }
-  return payload.data as T
+  return parseWebApiPayload<T>(response, `Web API 调用失败：${command}`)
 }
 
 export const getSettings = () => invokeCommand<GlobalSettings>('get_settings')

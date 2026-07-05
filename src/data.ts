@@ -6,10 +6,15 @@ export const defaultGlobalSettings: GlobalSettings = {
   backupStoragePath: 'D:\\ASA-Backups',
   language: 'zh-CN',
   theme: 'dark',
+  windowCloseBehavior: 'askEveryTime',
+  globalToggleShortcutKey: 'A',
+  hideTrayIconWhenMinimized: false,
   autoUpdateOnStart: true,
   autoRestartOnCrash: true,
   maxBackupRetention: 7,
   webServerPort: 18080,
+  webAdminUsername: 'admin',
+  webAdminPassword: '',
 }
 
 export const initialInstances: ServerInstance[] = []

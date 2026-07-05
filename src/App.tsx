@@ -23,7 +23,6 @@ import {
   TeamOutlined,
 } from '@ant-design/icons'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
-import { listen } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Button, Checkbox, Dropdown, Empty, message, Modal, Progress, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
@@ -59,9 +58,20 @@ import RconWindow from './RconWindow'
 import { isTauriRuntime } from './runtime'
 import SettingsWindow from './SettingsWindow'
 import SteamCmdSetup from './SteamCmdSetup'
+import {
+  ADD_INSTANCE_CREATED_EVENT,
+  INSTANCE_CONFIG_CHANGED_EVENT,
+  INSTANCE_DELETED_EVENT,
+  INSTANCE_STATUS_EVENT,
+  INSTANCES_CHANGED_EVENT,
+  JOB_PROGRESS_EVENT,
+  LOG_LINE_EVENT,
+  LOGS_CLEARED_EVENT,
+  LOGS_RESET_EVENT,
+  subscribeBackendEvent,
+} from './syncEvents'
 import type {
   GlobalSettings,
-  InstanceCreatedEvent,
   JobProgress,
   LogClearScope,
   LogLine,
@@ -70,7 +80,7 @@ import type {
   ServerInstance,
   ServerStatus,
 } from './types'
-import { ADD_INSTANCE_CREATED_EVENT, ADD_INSTANCE_WINDOW_LABEL, MAIN_WINDOW_LABEL, RCON_WINDOW_LABEL_PREFIX } from './windowEvents'
+import { ADD_INSTANCE_WINDOW_LABEL, MAIN_WINDOW_LABEL, RCON_WINDOW_LABEL_PREFIX } from './windowEvents'
 
 const { Text } = Typography
 const APPLICATION_LOG_TAB_KEY = 'application'
@@ -619,56 +629,96 @@ export default function App() {
   }, [activeLogLineCount, activeLogTab, autoScrollLogs])
 
   useEffect(() => {
-    if (!isTauriRuntime()) return undefined
-
     let disposed = false
     const unlisteners: Array<() => void> = []
 
-    void listen<LogLine>('asa:log-line', (event) => {
+    unlisteners.push(subscribeBackendEvent(LOG_LINE_EVENT, (line) => {
       if (!disposed) {
-        appendLogLine(event.payload)
-        updateJobProgressFromLog(event.payload)
+        appendLogLine(line)
+        updateJobProgressFromLog(line)
       }
-    }).then((unlisten) => unlisteners.push(unlisten))
+    }))
 
-    void listen<LogClearScope>('asa:logs-cleared', (event) => {
+    unlisteners.push(subscribeBackendEvent(LOGS_CLEARED_EVENT, (scope) => {
       if (!disposed) {
-        setLogs((current) => current.filter((line) => !matchesLogClearScope(line, event.payload)))
+        setLogs((current) => current.filter((line) => !matchesLogClearScope(line, scope)))
       }
-    }).then((unlisten) => unlisteners.push(unlisten))
+    }))
 
-    void listen<ServerInstance>('asa:instance-status', (event) => {
-      if (!disposed) replaceInstance(event.payload)
-    }).then((unlisten) => unlisteners.push(unlisten))
+    unlisteners.push(subscribeBackendEvent(LOGS_RESET_EVENT, () => {
+      if (!disposed) setLogs([])
+    }))
 
-    void listen<JobProgress>('asa:job-progress', (event) => {
-      if (disposed || !event.payload.instanceId) return
+    unlisteners.push(subscribeBackendEvent(INSTANCE_STATUS_EVENT, (instance) => {
+      if (!disposed) replaceInstance(instance)
+    }))
+
+    unlisteners.push(subscribeBackendEvent(JOB_PROGRESS_EVENT, (progress) => {
+      if (disposed || !progress.instanceId) return
       setJobProgress((current) => ({
         ...current,
-        [event.payload.instanceId as string]: mergeJobProgress(current[event.payload.instanceId as string], event.payload),
+        [progress.instanceId as string]: mergeJobProgress(current[progress.instanceId as string], progress),
       }))
-    }).then((unlisten) => unlisteners.push(unlisten))
+    }))
 
-    void listen<InstanceCreatedEvent>(ADD_INSTANCE_CREATED_EVENT, (event) => {
+    unlisteners.push(subscribeBackendEvent(ADD_INSTANCE_CREATED_EVENT, (eventPayload) => {
       if (disposed) return
-      replaceInstance(event.payload.instance)
-      setSelectedId(event.payload.instance.id)
-      setSelectedRows([event.payload.instance.id])
-      void loadInstanceDetails(event.payload.instance.id).catch((error) => {
+      replaceInstance(eventPayload.instance)
+      setSelectedId(eventPayload.instance.id)
+      setSelectedRows([eventPayload.instance.id])
+      void loadInstanceDetails(eventPayload.instance.id).catch((error) => {
         messageApi.error(`加载新增实例配置失败：${String(error)}`)
       })
       void refreshLogs()
-      messageApi.success(`${event.payload.instance.name} 已添加`)
-      if (event.payload.autoInstall) {
-        void installInstance(event.payload.instance)
+      messageApi.success(`${eventPayload.instance.name} 已添加`)
+      if (eventPayload.autoInstall) {
+        void installInstance(eventPayload.instance)
       }
-    }).then((unlisten) => unlisteners.push(unlisten))
+    }))
+
+    unlisteners.push(subscribeBackendEvent(INSTANCE_CONFIG_CHANGED_EVENT, (payload) => {
+      if (disposed) return
+      replaceInstance(payload.instance)
+      if (payload.instanceId !== selectedId) return
+      if (dirty) {
+        messageApi.info('检测到另一端已更新当前实例配置；已保留你本地尚未保存的编辑')
+        return
+      }
+      setConfig(enforceRequiredRconConfig({ ...defaultConfig, ...payload.config }))
+      setMods(payload.mods)
+      setDirty(false)
+    }))
+
+    unlisteners.push(subscribeBackendEvent(INSTANCE_DELETED_EVENT, (removed) => {
+      if (disposed) return
+      setInstances((current) => {
+        const updated = current.filter((item) => item.id !== removed.id)
+        instancesRef.current = updated
+        return updated
+      })
+      setSelectedRows((current) => current.filter((id) => id !== removed.id))
+      setJobProgress((current) => {
+        const next = { ...current }
+        delete next[removed.id]
+        return next
+      })
+      if (selectedId === removed.id) {
+        setSelectedId('')
+        setConfig(defaultConfig)
+        setMods([])
+        setDirty(false)
+      }
+    }))
+
+    unlisteners.push(subscribeBackendEvent(INSTANCES_CHANGED_EVENT, () => {
+      if (!disposed) void loadInstances().catch((error) => console.error('同步实例列表失败', error))
+    }))
 
     return () => {
       disposed = true
       unlisteners.forEach((unlisten) => unlisten())
     }
-  }, [appendLogLine, loadInstanceDetails, messageApi, refreshLogs, replaceInstance, updateJobProgressFromLog])
+  }, [appendLogLine, dirty, loadInstanceDetails, loadInstances, messageApi, refreshLogs, replaceInstance, selectedId, updateJobProgressFromLog])
 
   useEffect(() => {
     if (isTauriRuntime()) return undefined
@@ -1240,20 +1290,6 @@ export default function App() {
   const closeWebDialog = () => setWebDialog(null)
   const webDialogWidth = webDialog?.type === 'rcon' ? 1080 : webDialog?.type === 'settings' ? 900 : 780
 
-  const handleWebInstanceCreated = (eventPayload: InstanceCreatedEvent) => {
-    replaceInstance(eventPayload.instance)
-    setSelectedId(eventPayload.instance.id)
-    setSelectedRows([eventPayload.instance.id])
-    void loadInstanceDetails(eventPayload.instance.id).catch((error) => {
-      messageApi.error(`加载新增实例配置失败：${String(error)}`)
-    })
-    void refreshLogs()
-    messageApi.success(`${eventPayload.instance.name} 已添加`)
-    if (eventPayload.autoInstall) {
-      void installInstance(eventPayload.instance)
-    }
-  }
-
   return (
     <div className="app-shell">
       {contextHolder}{modalContext}
@@ -1374,7 +1410,6 @@ export default function App() {
           <AddInstanceWindow
             initialParams={webDialog.params}
             onClose={closeWebDialog}
-            onCreated={handleWebInstanceCreated}
           />
         ) : webDialog?.type === 'rcon' ? (
           <RconWindow

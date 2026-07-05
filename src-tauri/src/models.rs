@@ -16,10 +16,46 @@ pub struct GlobalSettings {
     pub max_backup_retention: u32,
     #[serde(default = "default_web_server_port")]
     pub web_server_port: u16,
+    #[serde(default = "default_web_admin_username")]
+    pub web_admin_username: String,
+    #[serde(default)]
+    pub web_admin_password: String,
+    #[serde(default = "default_window_close_behavior")]
+    pub window_close_behavior: WindowCloseBehavior,
+    #[serde(default = "default_global_toggle_shortcut_key")]
+    pub global_toggle_shortcut_key: String,
+    #[serde(default)]
+    pub hide_tray_icon_when_minimized: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum WindowCloseBehavior {
+    AskEveryTime,
+    MinimizeToTray,
+    ExitApp,
+}
+
+impl Default for WindowCloseBehavior {
+    fn default() -> Self {
+        Self::AskEveryTime
+    }
+}
+
+pub fn default_window_close_behavior() -> WindowCloseBehavior {
+    WindowCloseBehavior::AskEveryTime
+}
+
+pub fn default_global_toggle_shortcut_key() -> String {
+    "A".to_string()
 }
 
 pub fn default_web_server_port() -> u16 {
     18080
+}
+
+pub fn default_web_admin_username() -> String {
+    "admin".to_string()
 }
 
 impl Default for GlobalSettings {
@@ -34,6 +70,11 @@ impl Default for GlobalSettings {
             auto_restart_on_crash: true,
             max_backup_retention: 7,
             web_server_port: 18080,
+            web_admin_username: default_web_admin_username(),
+            web_admin_password: String::new(),
+            window_close_behavior: WindowCloseBehavior::AskEveryTime,
+            global_toggle_shortcut_key: default_global_toggle_shortcut_key(),
+            hide_tray_icon_when_minimized: false,
         }
     }
 }

@@ -1,8 +1,4 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::{Manager, RunEvent};
 
 mod app_state;
 mod ark_config;
@@ -14,7 +10,9 @@ mod models;
 mod rcon;
 mod steamcmd;
 mod storage;
+mod sync_events;
 mod web_server;
+mod window_controls;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 
@@ -23,27 +21,8 @@ fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-fn request_full_shutdown<R: tauri::Runtime>(
-    app_handle: &tauri::AppHandle<R>,
-    is_shutting_down: &AtomicBool,
-) {
-    if is_shutting_down.swap(true, Ordering::SeqCst) {
-        return;
-    }
-
-    for (label, window) in app_handle.webview_windows() {
-        if label != MAIN_WINDOW_LABEL {
-            let _ = window.close();
-        }
-    }
-
-    app_handle.exit(0);
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let is_shutting_down = Arc::new(AtomicBool::new(false));
-
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -53,7 +32,10 @@ pub fn run() {
                 .settings()
                 .map_err(|error| Box::<dyn std::error::Error>::from(error))?
                 .web_server_port;
+            app.manage(sync_events::SyncEventBus::default());
             app.manage(runtime.clone());
+            window_controls::setup_window_controls(app, &runtime)
+                .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
             web_server::start(app.handle().clone(), runtime, web_server_port);
             Ok(())
         })
@@ -97,13 +79,23 @@ pub fn run() {
         .expect("启动 ASA 服务端管理器失败")
         .run(move |app_handle, event| {
             if let RunEvent::WindowEvent { label, event, .. } = event {
-                if label == MAIN_WINDOW_LABEL
-                    && matches!(
-                        event,
-                        WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
-                    )
-                {
-                    request_full_shutdown(app_handle, is_shutting_down.as_ref());
+                if label == MAIN_WINDOW_LABEL {
+                    let Some(state) = app_handle
+                        .try_state::<std::sync::Arc<window_controls::WindowControlState>>()
+                    else {
+                        return;
+                    };
+                    if matches!(event, tauri::WindowEvent::Destroyed) {
+                        window_controls::request_full_shutdown(app_handle, &state);
+                        return;
+                    }
+                    let Some(window) = app_handle.get_webview_window(MAIN_WINDOW_LABEL) else {
+                        return;
+                    };
+                    let Some(runtime) = app_handle.try_state::<app_state::AppRuntime>() else {
+                        return;
+                    };
+                    window_controls::handle_main_window_event(&window, &event, &state, &runtime);
                 }
             }
         });

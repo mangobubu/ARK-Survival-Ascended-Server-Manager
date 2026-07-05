@@ -6,10 +6,15 @@ export interface GlobalSettings {
   backupStoragePath: string
   language: 'zh-CN' | 'en-US'
   theme: 'dark' | 'light' | 'system'
+  windowCloseBehavior: 'askEveryTime' | 'minimizeToTray' | 'exitApp'
+  globalToggleShortcutKey: string
+  hideTrayIconWhenMinimized: boolean
   autoUpdateOnStart: boolean
   autoRestartOnCrash: boolean
   maxBackupRetention: number
   webServerPort: number
+  webAdminUsername: string
+  webAdminPassword: string
 }
 
 export interface SteamCmdCheck {

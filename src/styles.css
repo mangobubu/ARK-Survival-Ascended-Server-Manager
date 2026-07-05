@@ -14,7 +14,10 @@ html.settings-document body,
 html.settings-document #root,
 html.child-window-document,
 html.child-window-document body,
-html.child-window-document #root { min-width: 0; }
+html.child-window-document #root,
+html.web-login-document,
+html.web-login-document body,
+html.web-login-document #root { min-width: 0; }
 
 body {
   height: 100vh;
@@ -24,6 +27,195 @@ body {
 }
 
 button, input, textarea { font: inherit; }
+
+.web-login-loading {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  place-items: center;
+  color: #dff5ff;
+  letter-spacing: 1px;
+  background:
+    radial-gradient(circle at 68% 16%, rgba(0, 169, 255, .18), transparent 28%),
+    linear-gradient(145deg, #020813, #061625 55%, #02070e);
+}
+
+.web-login-page {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  min-height: 720px;
+  padding: 56px clamp(42px, 7vw, 112px);
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) minmax(380px, 450px);
+  align-items: center;
+  gap: clamp(42px, 6vw, 96px);
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, rgba(2, 8, 18, .94) 0%, rgba(3, 14, 25, .78) 44%, rgba(2, 8, 16, .90) 100%),
+    radial-gradient(circle at 20% 18%, rgba(0, 189, 255, .25), transparent 30%),
+    radial-gradient(circle at 78% 82%, rgba(24, 210, 136, .18), transparent 28%),
+    url('https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/2399830/library_hero.jpg') center / cover no-repeat,
+    url('https://cdn.cloudflare.steamstatic.com/steam/apps/2399830/library_hero.jpg') center / cover no-repeat,
+    linear-gradient(135deg, #03111d 0%, #072236 52%, #01060d 100%);
+}
+
+.web-login-page::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, .08), rgba(0, 0, 0, .58)),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, .035) 0 1px, transparent 1px 160px);
+  mask-image: linear-gradient(90deg, #000, rgba(0, 0, 0, .75), transparent);
+}
+
+.web-login-page__aurora {
+  position: absolute;
+  width: 58vw;
+  height: 58vw;
+  right: -22vw;
+  top: -28vw;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, rgba(0, 178, 255, .35), rgba(0, 178, 255, .12) 34%, transparent 66%);
+  filter: blur(8px);
+  opacity: .78;
+}
+
+.web-login-hero {
+  position: relative;
+  z-index: 1;
+  max-width: 760px;
+}
+
+.web-login-hero__badge {
+  width: fit-content;
+  margin-bottom: 20px;
+  padding: 8px 12px;
+  border: 1px solid rgba(91, 209, 255, .32);
+  border-radius: 999px;
+  color: #9de5ff;
+  background: rgba(2, 17, 31, .58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
+  font-size: 12px;
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+}
+
+.web-login-hero h1 {
+  margin: 0;
+  max-width: 720px;
+  color: #f4fbff;
+  font-size: clamp(42px, 5.6vw, 78px);
+  line-height: 1.04;
+  letter-spacing: 2px;
+  text-shadow: 0 18px 48px rgba(0, 0, 0, .48);
+}
+
+.web-login-hero p {
+  max-width: 620px;
+  margin: 22px 0 0;
+  color: #a9c5d7;
+  font-size: 16px;
+  line-height: 1.9;
+}
+
+.web-login-hero__chips {
+  margin-top: 28px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.web-login-hero__chips span {
+  padding: 8px 12px;
+  border: 1px solid rgba(100, 202, 255, .22);
+  border-radius: 6px;
+  color: #d2edf9;
+  background: rgba(2, 13, 24, .56);
+  backdrop-filter: blur(8px);
+  font-size: 12px;
+}
+
+.web-login-card {
+  position: relative;
+  z-index: 1;
+  padding: 34px;
+  border: 1px solid rgba(104, 207, 255, .24);
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, rgba(7, 28, 45, .92), rgba(2, 13, 24, .86)),
+    rgba(4, 19, 32, .82);
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, .48),
+    inset 0 1px 0 rgba(255, 255, 255, .08);
+  backdrop-filter: blur(18px);
+}
+
+.web-login-card__logo {
+  width: 86px;
+  height: 86px;
+  margin: -76px auto 12px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(110, 218, 255, .36);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 34% 22%, rgba(41, 199, 255, .33), transparent 42%),
+    linear-gradient(145deg, rgba(5, 28, 47, .98), rgba(1, 11, 22, .98));
+  box-shadow: 0 18px 42px rgba(0, 0, 0, .38), 0 0 32px rgba(0, 184, 255, .18);
+}
+
+.web-login-card__logo img {
+  width: 66px;
+  height: 66px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 16px rgba(83, 219, 255, .28));
+}
+
+.web-login-card__title {
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.web-login-card__title h3 {
+  margin: 0 0 7px;
+  color: #f1f8ff;
+  letter-spacing: 1px;
+}
+
+.web-login-card__title .ant-typography {
+  color: #93aabc;
+  font-size: 12px;
+}
+
+.web-login-alert {
+  margin-bottom: 20px;
+  border-color: rgba(36, 149, 205, .32);
+  background: rgba(3, 17, 30, .72);
+}
+
+.web-login-form .ant-form-item-label > label {
+  color: #b6c8d6;
+  font-size: 12px;
+}
+
+.web-login-form .ant-input-affix-wrapper {
+  height: 42px;
+  border-color: #17415f;
+  background: rgba(2, 12, 21, .92);
+}
+
+.web-login-submit.ant-btn {
+  height: 44px;
+  margin-top: 6px;
+  border: 0;
+  background: linear-gradient(135deg, #00a7ff, #13d88b);
+  box-shadow: 0 12px 30px rgba(0, 169, 255, .26);
+  font-weight: 600;
+}
 
 .app-shell { height: 100vh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 
@@ -842,6 +1034,14 @@ button, input, textarea { font: inherit; }
 .settings-toggle-row strong { color: #bfd0dd; font-size: 11px; font-weight: 500; }
 .settings-toggle-row span { margin-top: 2px; overflow: hidden; color: #627c90; font-size: 9px; white-space: nowrap; text-overflow: ellipsis; }
 .settings-toggle-row .ant-form-item { margin-left: auto; }
+.settings-toggle-row--wide { min-height: 68px; }
+.settings-toggle-row--wide strong { display: inline-flex; align-items: center; gap: 6px; }
+.settings-toggle-row--wide span { white-space: normal; line-height: 1.45; }
+.settings-inline-help { color: #1eb8ff; cursor: help; }
+.settings-shortcut-input input { cursor: pointer; font-family: "Cascadia Mono", Consolas, monospace; letter-spacing: .02em; }
+.settings-popover-note { max-width: 260px; color: #adc1d1; font-size: 12px; line-height: 1.55; }
+.settings-popover-note p { margin: 0 0 7px; }
+.settings-popover-note p:last-child { margin-bottom: 0; }
 .settings-automation-grid > .ant-form-item .ant-input-number-group-wrapper,
 .settings-automation-grid > .ant-form-item .ant-input-number { width: 100%; }
 
@@ -902,6 +1102,47 @@ button, input, textarea { font: inherit; }
   border: 1px dashed #1b587d;
   border-radius: 7px;
   background: rgba(4, 18, 31, .64);
+}
+
+.settings-web-auth-note {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid #153954;
+  border-radius: 6px;
+  background: rgba(2, 14, 24, .52);
+  color: #b6c8d6;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.settings-web-auth-note .ant-typography:last-child {
+  color: #9fb3c3;
+  font-size: 11px;
+}
+
+@media (max-width: 980px) {
+  .web-login-page {
+    min-height: 100vh;
+    padding: 36px 22px;
+    grid-template-columns: 1fr;
+    align-content: center;
+    overflow-y: auto;
+  }
+
+  .web-login-hero {
+    max-width: none;
+  }
+
+  .web-login-hero h1 {
+    font-size: 38px;
+  }
+
+  .web-login-card {
+    width: min(100%, 460px);
+    margin: 32px auto 0;
+  }
 }
 
 .rcon-header {
@@ -1281,7 +1522,9 @@ html.theme-light .mod-item,
 html.theme-light .steamcmd-current-path,
 html.theme-light .steamcmd-progress-stats > div,
 html.theme-light .rcon-doc-item,
-html.theme-light .rcon-docs__note {
+html.theme-light .rcon-docs__note,
+html.theme-light .settings-web-port-note,
+html.theme-light .settings-web-auth-note {
   border-color: #c9d9e6;
   background: rgba(255, 255, 255, .82);
 }
@@ -1331,6 +1574,28 @@ html.theme-light .rcon-doc-item p,
 html.theme-light .app-footer > div,
 html.theme-light .steamcmd-progress-stats span {
   color: #5d7082;
+}
+
+html.theme-light .settings-web-port-note {
+  border-color: #c7d9e7;
+  background: #f6faff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .8);
+}
+
+html.theme-light .settings-web-auth-note {
+  border-color: #c7d9e7;
+  background: #f6faff;
+  color: #53677a;
+}
+
+html.theme-light .settings-popover-note {
+  color: #53677a;
+}
+
+html.theme-light .settings-web-port-note code {
+  color: #0a6fa8;
+  border-color: #c5d6e4;
+  background: #eef7fd;
 }
 
 html.theme-light .topbar__actions .ant-btn,

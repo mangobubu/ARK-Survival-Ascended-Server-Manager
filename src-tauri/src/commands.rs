@@ -1,15 +1,20 @@
 use crate::{
     app_state::{AppRuntime, normalize_required_rcon_config, now_millis},
-    ark_config, backup, import_export, instance_config_import, steamcmd, storage,
+    ark_config, backup, import_export, instance_config_import, steamcmd, storage, window_controls,
+    sync_events::{
+        ADD_INSTANCE_CREATED_EVENT, INSTANCE_CONFIG_CHANGED_EVENT, INSTANCE_DELETED_EVENT,
+        INSTANCE_STATUS_EVENT, INSTANCES_CHANGED_EVENT, JOB_PROGRESS_EVENT, LOG_LINE_EVENT,
+        LOGS_CLEARED_EVENT, LOGS_RESET_EVENT, SETTINGS_CHANGED_EVENT,
+    },
     models::{
         ASA_DEDICATED_SERVER_APP_ID, AddInstancePayload, BackupItem, ExportResult, GlobalSettings,
         ImportResult, ImportedServerConfigPreview, JobProgress, LogLine, LogSource, ModItem,
-        PortCheckResult, ServerInstance, ServerLogKind, ServerStatus,
+        PortCheckResult, ServerInstance, ServerLogKind, ServerStatus, WindowCloseBehavior,
     },
     rcon,
 };
 use serde::{Serialize, de::DeserializeOwned};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
     io::{Read, Seek, SeekFrom},
@@ -21,7 +26,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, State, ipc::Channel};
+use tauri::{AppHandle, State, ipc::Channel};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncSeekExt},
     process::Command,
@@ -146,11 +151,14 @@ pub fn get_settings(runtime: State<'_, AppRuntime>) -> Result<GlobalSettings, St
 
 #[tauri::command]
 pub fn save_settings(
+    app: AppHandle,
     runtime: State<'_, AppRuntime>,
     settings: GlobalSettings,
 ) -> Result<GlobalSettings, String> {
     validate_settings(&settings)?;
-    runtime.save_settings(settings)
+    let saved = runtime.save_settings(settings)?;
+    publish_settings_changed(&app, saved.clone())?;
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -198,7 +206,9 @@ pub async fn handle_web_invoke(
         "save_settings" => {
             let settings: GlobalSettings = required_arg(&args, "settings")?;
             validate_settings(&settings)?;
-            to_json(runtime.save_settings(settings)?)
+            let saved = runtime.save_settings(settings)?;
+            publish_settings_changed(&app, saved.clone())?;
+            to_json(saved)
         }
         "list_instances" => to_json(
             runtime
@@ -211,11 +221,21 @@ pub async fn handle_web_invoke(
             required_arg(&args, "port")?,
             &required_arg::<String>(&args, "portKind")?,
         )?),
-        "create_instance" => to_json(
-            runtime
-                .create_instance(required_arg(&args, "payload")?)
-                .map(with_current_server_version)?,
-        ),
+        "create_instance" => {
+            let payload: AddInstancePayload = required_arg(&args, "payload")?;
+            let auto_install = payload.auto_install;
+            let instance = with_current_server_version(runtime.create_instance(payload)?);
+            publish_sync_event_best_effort(
+                &app,
+                ADD_INSTANCE_CREATED_EVENT,
+                json!({
+                    "instance": instance,
+                    "autoInstall": auto_install,
+                }),
+            );
+            publish_instances_changed(&app);
+            to_json(instance)
+        }
         "read_server_directory_config" => to_json(
             instance_config_import::read_server_directory_config(Path::new(
                 &required_arg::<String>(&args, "path")?,
@@ -234,6 +254,7 @@ pub async fn handle_web_invoke(
             let config: Value = required_arg(&args, "config")?;
             let mods: Vec<ModItem> = required_arg(&args, "mods")?;
             to_json(with_current_server_version(save_config_for_runtime(
+                &app,
                 &runtime,
                 &instance_id,
                 config,
@@ -244,7 +265,7 @@ pub async fn handle_web_invoke(
             let instance_id: String = required_arg(&args, "instanceId")?;
             let config: Value = required_arg(&args, "config")?;
             let mods: Vec<ModItem> = required_arg(&args, "mods")?;
-            save_config_for_runtime(&runtime, &instance_id, config, mods)?;
+            save_config_for_runtime(&app, &runtime, &instance_id, config, mods)?;
             to_json(restart_instance_inner(app, runtime, instance_id).await?)
         }
         "update_instance_mods" => {
@@ -253,6 +274,8 @@ pub async fn handle_web_invoke(
             validate_mods(&mods)?;
             let config = runtime.get_config(&instance_id)?;
             runtime.save_config_and_mods(&instance_id, config, mods.clone())?;
+            publish_instance_config_changed(&app, &runtime, &instance_id)?;
+            publish_instances_changed(&app);
             to_json(mods)
         }
         "check_mod_updates" => to_json(check_mod_updates(required_arg(&args, "mods")?)?),
@@ -294,14 +317,27 @@ pub async fn handle_web_invoke(
         "query_logs" => to_json(runtime.query_logs(optional_arg(&args, "limit")?)?),
         "clear_logs" => {
             runtime.clear_logs()?;
+            publish_sync_event_best_effort(&app, LOGS_RESET_EVENT, json!({}));
             Ok(Value::Null)
         }
         "clear_scoped_logs" => {
+            let source: LogSource = required_arg(&args, "source")?;
+            let instance: Option<String> = optional_arg(&args, "instance")?;
+            let server_log_kind: Option<ServerLogKind> = optional_arg(&args, "serverLogKind")?;
             runtime.clear_logs_by_scope(
-                required_arg(&args, "source")?,
-                optional_arg::<String>(&args, "instance")?.as_deref(),
-                optional_arg(&args, "serverLogKind")?,
+                source.clone(),
+                instance.as_deref(),
+                server_log_kind.clone(),
             )?;
+            publish_sync_event_best_effort(
+                &app,
+                LOGS_CLEARED_EVENT,
+                LogClearScope {
+                    source,
+                    instance,
+                    server_log_kind,
+                },
+            );
             Ok(Value::Null)
         }
         "create_backup" => to_json(create_backup_for_runtime(
@@ -329,14 +365,25 @@ pub async fn handle_web_invoke(
             required_arg(&args, "instanceIds")?,
         )?),
         "export_cluster" => to_json(import_export::export_instances(&runtime, Vec::new())?),
-        "import_instance_config" => to_json(import_export::import_instances(
-            &runtime,
-            Path::new(&required_arg::<String>(&args, "path")?),
-        )?),
-        "delete_instance" => to_json(runtime.delete_instance(&required_arg::<String>(
-            &args,
-            "instanceId",
-        )?)?),
+        "import_instance_config" => {
+            let result = import_export::import_instances(
+                &runtime,
+                Path::new(&required_arg::<String>(&args, "path")?),
+            )?;
+            if result.imported_instances > 0 {
+                publish_instances_changed(&app);
+            }
+            to_json(result)
+        }
+        "delete_instance" => {
+            let removed = runtime.delete_instance(&required_arg::<String>(
+                &args,
+                "instanceId",
+            )?)?;
+            publish_sync_event_best_effort(&app, INSTANCE_DELETED_EVENT, removed.clone());
+            publish_instances_changed(&app);
+            to_json(removed)
+        }
         "open_instance_directory" => {
             let instance = runtime.get_instance(&required_arg::<String>(&args, "instanceId")?)?;
             let path = Path::new(&instance.install_path);
@@ -387,6 +434,46 @@ fn no_op_channel<T>() -> Channel<T> {
     Channel::new(|_| Ok(()))
 }
 
+fn publish_sync_event<T: Serialize>(
+    app: &AppHandle,
+    event_name: &str,
+    payload: T,
+) -> Result<(), String> {
+    window_controls::publish_settings_changed_and_apply(app, event_name, payload)
+}
+
+fn publish_sync_event_best_effort<T: Serialize>(app: &AppHandle, event_name: &str, payload: T) {
+    let _ = publish_sync_event(app, event_name, payload);
+}
+
+fn publish_instances_changed(app: &AppHandle) {
+    publish_sync_event_best_effort(app, INSTANCES_CHANGED_EVENT, json!({}));
+}
+
+fn publish_settings_changed(app: &AppHandle, settings: GlobalSettings) -> Result<(), String> {
+    publish_sync_event(app, SETTINGS_CHANGED_EVENT, settings)
+}
+
+fn publish_instance_config_changed(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance_id: &str,
+) -> Result<(), String> {
+    let instance = with_current_server_version(runtime.get_instance(instance_id)?);
+    let config = runtime.get_config(instance_id)?;
+    let mods = runtime.get_mods(instance_id)?;
+    publish_sync_event(
+        app,
+        INSTANCE_CONFIG_CHANGED_EVENT,
+        json!({
+            "instanceId": instance_id,
+            "instance": instance,
+            "config": config,
+            "mods": mods,
+        }),
+    )
+}
+
 fn create_backup_for_runtime(
     runtime: &AppRuntime,
     instance_id: String,
@@ -415,12 +502,24 @@ fn create_backup_for_runtime(
 
 #[tauri::command]
 pub fn create_instance(
+    app: AppHandle,
     runtime: State<'_, AppRuntime>,
     payload: AddInstancePayload,
 ) -> Result<ServerInstance, String> {
-    runtime
+    let auto_install = payload.auto_install;
+    let instance = runtime
         .create_instance(payload)
-        .map(with_current_server_version)
+        .map(with_current_server_version)?;
+    publish_sync_event_best_effort(
+        &app,
+        ADD_INSTANCE_CREATED_EVENT,
+        json!({
+            "instance": instance,
+            "autoInstall": auto_install,
+        }),
+    );
+    publish_instances_changed(&app);
+    Ok(instance)
 }
 
 #[tauri::command]
@@ -446,6 +545,7 @@ pub fn get_instance_mods(
 
 #[tauri::command]
 pub fn save_instance_config(
+    app: AppHandle,
     runtime: State<'_, AppRuntime>,
     instance_id: String,
     config: Value,
@@ -465,6 +565,8 @@ pub fn save_instance_config(
             applied.launch_arguments.len()
         ),
     )?;
+    publish_instance_config_changed(&app, runtime.inner(), &instance_id)?;
+    publish_instances_changed(&app);
     Ok(with_current_server_version(instance))
 }
 
@@ -477,12 +579,13 @@ pub async fn apply_instance_config(
     mods: Vec<ModItem>,
 ) -> Result<ServerInstance, String> {
     let runtime = runtime.inner().clone();
-    save_config_for_runtime(&runtime, &instance_id, config, mods)?;
+    save_config_for_runtime(&app, &runtime, &instance_id, config, mods)?;
     restart_instance_inner(app, runtime, instance_id).await
 }
 
 #[tauri::command]
 pub fn update_instance_mods(
+    app: AppHandle,
     runtime: State<'_, AppRuntime>,
     instance_id: String,
     mods: Vec<ModItem>,
@@ -490,6 +593,8 @@ pub fn update_instance_mods(
     validate_mods(&mods)?;
     let config = runtime.get_config(&instance_id)?;
     runtime.save_config_and_mods(&instance_id, config, mods.clone())?;
+    publish_instance_config_changed(&app, runtime.inner(), &instance_id)?;
+    publish_instances_changed(&app);
     Ok(mods)
 }
 
@@ -594,7 +699,7 @@ async fn install_or_update_instance_inner(
             let mut updated = runtime.upsert_instance(instance.clone())?;
             let config = normalize_required_rcon_config(runtime.get_config(&updated.id)?)?;
             let mods = runtime.get_mods(&updated.id)?;
-            updated = save_config_for_runtime(&runtime, &updated.id, config, mods)?;
+            updated = save_config_for_runtime(&app, &runtime, &updated.id, config, mods)?;
             emit_instance_log(
                 &app,
                 &runtime,
@@ -747,18 +852,31 @@ pub fn query_logs(
 }
 
 #[tauri::command]
-pub fn clear_logs(runtime: State<'_, AppRuntime>) -> Result<(), String> {
-    runtime.clear_logs()
+pub fn clear_logs(app: AppHandle, runtime: State<'_, AppRuntime>) -> Result<(), String> {
+    runtime.clear_logs()?;
+    publish_sync_event_best_effort(&app, LOGS_RESET_EVENT, json!({}));
+    Ok(())
 }
 
 #[tauri::command]
 pub fn clear_scoped_logs(
+    app: AppHandle,
     runtime: State<'_, AppRuntime>,
     source: LogSource,
     instance: Option<String>,
     server_log_kind: Option<ServerLogKind>,
 ) -> Result<(), String> {
-    runtime.clear_logs_by_scope(source, instance.as_deref(), server_log_kind)
+    runtime.clear_logs_by_scope(source.clone(), instance.as_deref(), server_log_kind.clone())?;
+    publish_sync_event_best_effort(
+        &app,
+        LOGS_CLEARED_EVENT,
+        LogClearScope {
+            source,
+            instance,
+            server_log_kind,
+        },
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -829,18 +947,27 @@ pub fn export_cluster(runtime: State<'_, AppRuntime>) -> Result<ExportResult, St
 
 #[tauri::command]
 pub fn import_instance_config(
+    app: AppHandle,
     runtime: State<'_, AppRuntime>,
     path: String,
 ) -> Result<ImportResult, String> {
-    import_export::import_instances(&runtime, Path::new(&path))
+    let result = import_export::import_instances(&runtime, Path::new(&path))?;
+    if result.imported_instances > 0 {
+        publish_instances_changed(&app);
+    }
+    Ok(result)
 }
 
 #[tauri::command]
 pub fn delete_instance(
+    app: AppHandle,
     runtime: State<'_, AppRuntime>,
     instance_id: String,
 ) -> Result<ServerInstance, String> {
-    runtime.delete_instance(&instance_id)
+    let removed = runtime.delete_instance(&instance_id)?;
+    publish_sync_event_best_effort(&app, INSTANCE_DELETED_EVENT, removed.clone());
+    publish_instances_changed(&app);
+    Ok(removed)
 }
 
 #[tauri::command]
@@ -869,6 +996,7 @@ pub fn open_directory_path(path: String) -> Result<(), String> {
 }
 
 fn save_config_for_runtime(
+    app: &AppHandle,
     runtime: &AppRuntime,
     instance_id: &str,
     config: Value,
@@ -889,6 +1017,8 @@ fn save_config_for_runtime(
             applied.launch_arguments.len()
         ),
     )?;
+    publish_instance_config_changed(app, runtime, instance_id)?;
+    publish_instances_changed(app);
     Ok(instance)
 }
 
@@ -1181,7 +1311,7 @@ async fn start_instance_inner(
     }
     let config = normalize_required_rcon_config(runtime.get_config(&instance_id)?)?;
     let mods = runtime.get_mods(&instance_id)?;
-    let instance = save_config_for_runtime(&runtime, &instance_id, config.clone(), mods.clone())?;
+    let instance = save_config_for_runtime(&app, &runtime, &instance_id, config.clone(), mods.clone())?;
     let executable = ark_config::server_executable(&instance).ok_or_else(|| {
         format!(
             "未找到 ASA 服务端可执行文件，请先安装/更新实例：{}",
@@ -2160,7 +2290,11 @@ fn handle_server_log_line(
     }
     if let Some(server_version) = parse_asa_server_version(line) {
         if let Ok(updated) = runtime.update_instance_server_version(instance_id, server_version) {
-            let _ = app.emit("asa:instance-status", with_current_server_version(updated));
+            publish_sync_event_best_effort(
+                app,
+                INSTANCE_STATUS_EVENT,
+                with_current_server_version(updated),
+            );
         }
     }
     let level = classify_server_log_level(line, fallback_level);
@@ -2247,7 +2381,7 @@ fn is_instance_process_tracked(runtime: &AppRuntime, instance_id: &str) -> bool 
 
 fn emit_status(app: &AppHandle, runtime: &AppRuntime, instance_id: &str) -> Result<(), String> {
     let instance = with_current_server_version(runtime.get_instance(instance_id)?);
-    app.emit("asa:instance-status", instance)
+    publish_sync_event(app, INSTANCE_STATUS_EVENT, instance)
         .map_err(|error| format!("发送实例状态事件失败：{error}"))
 }
 
@@ -2257,8 +2391,9 @@ fn emit_logs_cleared(
     instance: Option<&str>,
     server_log_kind: Option<ServerLogKind>,
 ) -> Result<(), String> {
-    app.emit(
-        "asa:logs-cleared",
+    publish_sync_event(
+        app,
+        LOGS_CLEARED_EVENT,
         LogClearScope {
             source,
             instance: instance.map(str::to_string),
@@ -2285,7 +2420,7 @@ fn emit_instance_log(
     message: &str,
 ) -> Result<(), String> {
     let line = runtime.add_log(instance_name, level, message)?;
-    app.emit("asa:log-line", line)
+    publish_sync_event(app, LOG_LINE_EVENT, line)
         .map_err(|error| format!("发送日志事件失败：{error}"))
 }
 
@@ -2298,7 +2433,7 @@ fn emit_server_log(
     server_log_kind: ServerLogKind,
 ) -> Result<(), String> {
     let line = runtime.add_server_log_with_kind(instance_name, level, message, server_log_kind)?;
-    app.emit("asa:log-line", line)
+    publish_sync_event(app, LOG_LINE_EVENT, line)
         .map_err(|error| format!("发送日志事件失败：{error}"))
 }
 
@@ -2368,11 +2503,31 @@ fn validate_settings(settings: &GlobalSettings) -> Result<(), String> {
     if !matches!(settings.theme.as_str(), "dark" | "light" | "system") {
         return Err("应用主题仅支持 dark、light 或 system".to_string());
     }
+    if !matches!(
+        settings.window_close_behavior,
+        WindowCloseBehavior::AskEveryTime
+            | WindowCloseBehavior::MinimizeToTray
+            | WindowCloseBehavior::ExitApp
+    ) {
+        return Err("窗口关闭行为无效".to_string());
+    }
+    if !window_controls::is_supported_shortcut_key(&settings.global_toggle_shortcut_key) {
+        return Err("快捷键必须是 Ctrl + Alt + 一个字母、数字、F1-F24 或常用功能键".to_string());
+    }
     if !(1..=100).contains(&settings.max_backup_retention) {
         return Err("自动备份保留数量必须在 1-100 之间".to_string());
     }
     if !(1024..=65535).contains(&settings.web_server_port) {
         return Err("Web 访问端口必须在 1024-65535 之间".to_string());
+    }
+    if settings.web_admin_username.trim().len() > 64 {
+        return Err("Web 管理员账号不能超过 64 个字符".to_string());
+    }
+    if settings.web_admin_password.len() > 128 {
+        return Err("Web 管理员密码不能超过 128 个字符".to_string());
+    }
+    if settings.web_admin_username.trim().is_empty() && !settings.web_admin_password.is_empty() {
+        return Err("设置 Web 管理员密码时，管理员账号不能为空".to_string());
     }
     Ok(())
 }
@@ -3069,7 +3224,7 @@ fn emit_steamcmd_transfer_progress(
             bytes_per_second: snapshot.bytes_per_second,
         };
         let _ = sink.channel.send(payload.clone());
-        let _ = sink.app.emit("asa:job-progress", payload);
+        publish_sync_event_best_effort(&sink.app, JOB_PROGRESS_EVENT, payload);
     }
 }
 

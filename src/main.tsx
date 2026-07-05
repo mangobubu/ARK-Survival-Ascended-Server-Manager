@@ -1,13 +1,17 @@
 import { StrictMode, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { setTheme as setTauriAppTheme } from '@tauri-apps/api/app'
 import { ConfigProvider, theme } from 'antd'
 import enUS from 'antd/locale/en_US'
 import zhCN from 'antd/locale/zh_CN'
 import AddInstanceWindow from './AddInstanceWindow'
 import App from './App'
+import { clearWebAuthToken, getSettings, getWebAuthToken } from './backendApi'
+import LoginPage from './LoginPage'
 import RconWindow from './RconWindow'
 import SettingsWindow from './SettingsWindow'
 import { loadGlobalSettings, loadGlobalSettingsFromBackend, subscribeGlobalSettings } from './globalSettings'
+import { isTauriRuntime } from './runtime'
 import './styles.css'
 import type { GlobalSettings } from './types'
 
@@ -26,32 +30,85 @@ function resolveThemeMode(settings: GlobalSettings, systemDark: boolean) {
   return settings.theme
 }
 
+function applyDocumentTheme(settings: GlobalSettings, themeMode: 'dark' | 'light') {
+  document.documentElement.lang = settings.language
+  document.documentElement.dataset.theme = settings.theme
+  document.documentElement.dataset.resolvedTheme = themeMode
+  document.documentElement.style.colorScheme = themeMode
+  document.documentElement.classList.toggle('theme-light', themeMode === 'light')
+  document.documentElement.classList.toggle('theme-dark', themeMode === 'dark')
+}
+
+function applyNativeThemePreference(themePreference: GlobalSettings['theme']) {
+  if (!isTauriRuntime()) return
+
+  void setTauriAppTheme(themePreference === 'system' ? null : themePreference).catch((error) => {
+    console.error('同步桌面端原生主题失败', error)
+  })
+}
+
 function Root() {
   const [settings, setSettings] = useState<GlobalSettings>(loadGlobalSettings)
   const [systemDark, setSystemDark] = useState(systemPrefersDark)
+  const [webAuthenticated, setWebAuthenticated] = useState(() => isTauriRuntime() || Boolean(getWebAuthToken()))
+  const [checkingWebAuth, setCheckingWebAuth] = useState(!isTauriRuntime() && Boolean(getWebAuthToken()))
   const themeMode = resolveThemeMode(settings, systemDark)
+  const needsWebLogin = !isTauriRuntime() && (!webAuthenticated || checkingWebAuth)
 
   useEffect(() => {
+    if (!isTauriRuntime() && (!webAuthenticated || checkingWebAuth)) return
     const unsubscribe = subscribeGlobalSettings(setSettings)
     void loadGlobalSettingsFromBackend().then(setSettings).catch((error) => {
       console.error('加载全局设置失败', error)
     })
     return unsubscribe
-  }, [])
+  }, [checkingWebAuth, webAuthenticated])
 
   useEffect(() => {
     const media = window.matchMedia?.('(prefers-color-scheme: dark)')
     if (!media) return
     const handleChange = () => setSystemDark(media.matches)
-    media.addEventListener('change', handleChange)
-    return () => media.removeEventListener('change', handleChange)
+    handleChange()
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', handleChange)
+      return () => media.removeEventListener('change', handleChange)
+    }
+    media.addListener(handleChange)
+    return () => media.removeListener(handleChange)
   }, [])
 
   useEffect(() => {
-    document.documentElement.lang = settings.language
-    document.documentElement.classList.toggle('theme-light', themeMode === 'light')
-    document.documentElement.classList.toggle('theme-dark', themeMode === 'dark')
-  }, [settings.language, themeMode])
+    applyDocumentTheme(settings, themeMode)
+  }, [settings, themeMode])
+
+  useEffect(() => {
+    applyNativeThemePreference(settings.theme)
+  }, [settings.theme])
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('web-login-document', needsWebLogin)
+    return () => document.documentElement.classList.remove('web-login-document')
+  }, [needsWebLogin])
+
+  useEffect(() => {
+    if (isTauriRuntime() || !getWebAuthToken()) return
+    let disposed = false
+    void getSettings()
+      .then(() => {
+        if (!disposed) setWebAuthenticated(true)
+      })
+      .catch((error) => {
+        console.error('Web 登录状态已失效', error)
+        clearWebAuthToken()
+        if (!disposed) setWebAuthenticated(false)
+      })
+      .finally(() => {
+        if (!disposed) setCheckingWebAuth(false)
+      })
+    return () => {
+      disposed = true
+    }
+  }, [])
 
   const appTheme = useMemo(() => {
     const isDark = themeMode === 'dark'
@@ -106,7 +163,17 @@ function Root() {
 
   return (
     <ConfigProvider locale={settings.language === 'en-US' ? enUS : zhCN} theme={appTheme}>
-      {isSettingsWindow ? <SettingsWindow /> : isAddInstanceWindow ? <AddInstanceWindow /> : isRconWindow ? <RconWindow /> : <App />}
+      {needsWebLogin ? (
+        checkingWebAuth ? <div className="web-login-loading">正在校验 Web 登录状态...</div> : <LoginPage onAuthenticated={() => setWebAuthenticated(true)} />
+      ) : isSettingsWindow ? (
+        <SettingsWindow />
+      ) : isAddInstanceWindow ? (
+        <AddInstanceWindow />
+      ) : isRconWindow ? (
+        <RconWindow />
+      ) : (
+        <App />
+      )}
     </ConfigProvider>
   )
 }

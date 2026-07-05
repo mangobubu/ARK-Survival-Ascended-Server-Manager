@@ -1,9 +1,7 @@
-import { emit, listen } from '@tauri-apps/api/event'
-import { defaultGlobalSettings } from './data'
 import { getSettings, saveSettings } from './backendApi'
+import { defaultGlobalSettings } from './data'
+import { SETTINGS_CHANGED_EVENT, subscribeBackendEvent } from './syncEvents'
 import type { GlobalSettings } from './types'
-import { SETTINGS_CHANGED_EVENT } from './windowEvents'
-import { isTauriRuntime } from './runtime'
 
 const LOCAL_SETTINGS_EVENT = 'asa-global-settings-local'
 
@@ -18,11 +16,6 @@ export async function loadGlobalSettingsFromBackend(): Promise<GlobalSettings> {
 export async function saveGlobalSettings(settings: GlobalSettings) {
   const saved = await saveSettings(settings)
   window.dispatchEvent(new CustomEvent<GlobalSettings>(LOCAL_SETTINGS_EVENT, { detail: saved }))
-  if (isTauriRuntime()) {
-    void emit(SETTINGS_CHANGED_EVENT, saved).catch((error) => {
-      console.error('同步全局设置失败', error)
-    })
-  }
   return saved
 }
 
@@ -32,7 +25,6 @@ export async function ensureGlobalStorageDirectories(settings: GlobalSettings) {
 
 export function subscribeGlobalSettings(onChange: (settings: GlobalSettings) => void) {
   let disposed = false
-  let unlistenTauri: (() => void) | undefined
 
   const handleLocal = (event: Event) => {
     onChange((event as CustomEvent<GlobalSettings>).detail)
@@ -46,18 +38,13 @@ export function subscribeGlobalSettings(onChange: (settings: GlobalSettings) => 
   window.addEventListener(LOCAL_SETTINGS_EVENT, handleLocal)
   window.addEventListener('focus', handleFocus)
 
-  if (isTauriRuntime()) {
-    void listen<GlobalSettings>(SETTINGS_CHANGED_EVENT, (event) => onChange(event.payload)).then((unlisten) => {
-      if (disposed) unlisten()
-      else unlistenTauri = unlisten
-    }).catch((error) => {
-      console.error('监听全局设置同步失败', error)
-    })
-  }
+  const unsubscribeBackend = subscribeBackendEvent(SETTINGS_CHANGED_EVENT, (settings) => {
+    if (!disposed) onChange(settings)
+  })
 
   return () => {
     disposed = true
-    unlistenTauri?.()
+    unsubscribeBackend()
     window.removeEventListener(LOCAL_SETTINGS_EVENT, handleLocal)
     window.removeEventListener('focus', handleFocus)
   }
