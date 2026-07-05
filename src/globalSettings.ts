@@ -3,6 +3,7 @@ import { defaultGlobalSettings } from './data'
 import { getSettings, saveSettings } from './backendApi'
 import type { GlobalSettings } from './types'
 import { SETTINGS_CHANGED_EVENT } from './windowEvents'
+import { isTauriRuntime } from './runtime'
 
 const LOCAL_SETTINGS_EVENT = 'asa-global-settings-local'
 
@@ -17,9 +18,11 @@ export async function loadGlobalSettingsFromBackend(): Promise<GlobalSettings> {
 export async function saveGlobalSettings(settings: GlobalSettings) {
   const saved = await saveSettings(settings)
   window.dispatchEvent(new CustomEvent<GlobalSettings>(LOCAL_SETTINGS_EVENT, { detail: saved }))
-  void emit(SETTINGS_CHANGED_EVENT, saved).catch((error) => {
-    console.error('同步全局设置失败', error)
-  })
+  if (isTauriRuntime()) {
+    void emit(SETTINGS_CHANGED_EVENT, saved).catch((error) => {
+      console.error('同步全局设置失败', error)
+    })
+  }
   return saved
 }
 
@@ -43,12 +46,14 @@ export function subscribeGlobalSettings(onChange: (settings: GlobalSettings) => 
   window.addEventListener(LOCAL_SETTINGS_EVENT, handleLocal)
   window.addEventListener('focus', handleFocus)
 
-  void listen<GlobalSettings>(SETTINGS_CHANGED_EVENT, (event) => onChange(event.payload)).then((unlisten) => {
-    if (disposed) unlisten()
-    else unlistenTauri = unlisten
-  }).catch((error) => {
-    console.error('监听全局设置同步失败', error)
-  })
+  if (isTauriRuntime()) {
+    void listen<GlobalSettings>(SETTINGS_CHANGED_EVENT, (event) => onChange(event.payload)).then((unlisten) => {
+      if (disposed) unlisten()
+      else unlistenTauri = unlisten
+    }).catch((error) => {
+      console.error('监听全局设置同步失败', error)
+    })
+  }
 
   return () => {
     disposed = true

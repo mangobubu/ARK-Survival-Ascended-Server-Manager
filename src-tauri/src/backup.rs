@@ -94,6 +94,55 @@ pub fn list_instance_backups(
     Ok(backups)
 }
 
+pub fn prune_instance_backups(
+    backup_root: &Path,
+    instance: &ServerInstance,
+    max_retention: u32,
+) -> Result<usize, String> {
+    let instance_backup_dir = backup_root.join(sanitize_filename(&instance.name));
+    if !instance_backup_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut backup_files = Vec::new();
+    for entry in fs::read_dir(&instance_backup_dir).map_err(|error| {
+        format!(
+            "无法读取备份目录 {}：{error}",
+            instance_backup_dir.display()
+        )
+    })? {
+        let entry = entry.map_err(|error| format!("读取备份目录项失败：{error}"))?;
+        let path = entry.path();
+        if !path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+        {
+            continue;
+        }
+        let metadata = entry
+            .metadata()
+            .map_err(|error| format!("无法读取备份文件信息 {}：{error}", path.display()))?;
+        if !metadata.is_file() {
+            continue;
+        }
+        let created_at = metadata
+            .created()
+            .or_else(|_| metadata.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        backup_files.push((created_at, path));
+    }
+
+    backup_files.sort_by(|left, right| right.0.cmp(&left.0));
+    let mut removed = 0_usize;
+    for (_, path) in backup_files.into_iter().skip(max_retention as usize) {
+        fs::remove_file(&path)
+            .map_err(|error| format!("无法删除过期备份 {}：{error}", path.display()))?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
 pub fn restore_instance_backup(
     instance: &ServerInstance,
     backup_path: &Path,
@@ -228,6 +277,7 @@ mod tests {
             pid: None,
             last_started_at: None,
             last_stopped_at: None,
+            server_version: String::new(),
             version_state: "已安装".to_string(),
             last_error: None,
         }
@@ -248,5 +298,29 @@ mod tests {
         restore_instance_backup(&instance, Path::new(&backup.path)).expect("恢复备份");
 
         assert_eq!(fs::read_to_string(saved.join("world.ark")).unwrap(), "data");
+    }
+
+    #[test]
+    fn 按全局保留数量清理旧备份() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let backup_root = temp.path().join("backups");
+        let instance = instance(&temp.path().join("server"));
+        let instance_backup_dir = backup_root.join(sanitize_filename(&instance.name));
+        fs::create_dir_all(&instance_backup_dir).expect("创建备份目录");
+
+        for index in 0..4 {
+            fs::write(
+                instance_backup_dir.join(format!("backup-{index}.zip")),
+                format!("backup-{index}"),
+            )
+            .expect("写入备份占位文件");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        let removed = prune_instance_backups(&backup_root, &instance, 2).expect("清理旧备份");
+        let remaining = list_instance_backups(&backup_root, &instance).expect("读取备份列表");
+
+        assert_eq!(removed, 2);
+        assert_eq!(remaining.len(), 2);
     }
 }

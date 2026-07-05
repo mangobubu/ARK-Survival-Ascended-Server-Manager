@@ -1,6 +1,6 @@
 use crate::{
     app_state::{AppRuntime, normalize_required_rcon_config, now_millis},
-    ark_config, backup, import_export, instance_config_import,
+    ark_config, backup, import_export, instance_config_import, steamcmd, storage,
     models::{
         ASA_DEDICATED_SERVER_APP_ID, AddInstancePayload, BackupItem, ExportResult, GlobalSettings,
         ImportResult, ImportedServerConfigPreview, JobProgress, LogLine, LogSource, ModItem,
@@ -8,10 +8,11 @@ use crate::{
     },
     rcon,
 };
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{
     collections::VecDeque,
-    io::SeekFrom,
+    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
     sync::{
@@ -56,8 +57,18 @@ const SERVER_LOG_INITIAL_BACKFILL_LIMIT: u64 = 512 * 1024;
 const SERVER_STARTUP_PROBE_INTERVAL: Duration = Duration::from_secs(3);
 const SERVER_STARTUP_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const SERVER_STARTUP_PROBE_LOG_INTERVAL: Duration = Duration::from_secs(30);
+const SERVER_VERSION_SCAN_BYTES: u64 = 512 * 1024;
+const PLAYER_COUNT_POLL_TIMEOUT: Duration = Duration::from_secs(4);
 
 type SharedServerLogDeduper = Arc<Mutex<VecDeque<(Instant, String)>>>;
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LogClearScope {
+    source: LogSource,
+    instance: Option<String>,
+    server_log_kind: Option<ServerLogKind>,
+}
 
 #[derive(Clone)]
 struct SteamCmdProgressSink {
@@ -95,6 +106,11 @@ struct ParsedSteamCmdProgress {
     percent: Option<f64>,
     downloaded_bytes: u64,
     total_bytes: Option<u64>,
+}
+
+struct ReadinessProbe {
+    method: String,
+    players: u32,
 }
 
 struct ManifestProgress {
@@ -139,7 +155,11 @@ pub fn save_settings(
 
 #[tauri::command]
 pub fn list_instances(runtime: State<'_, AppRuntime>) -> Result<Vec<ServerInstance>, String> {
-    runtime.list_instances()
+    Ok(runtime
+        .list_instances()?
+        .into_iter()
+        .map(with_current_server_version)
+        .collect())
 }
 
 #[tauri::command]
@@ -151,12 +171,256 @@ pub fn check_instance_port(
     runtime.check_instance_port(port, &port_kind)
 }
 
+pub async fn handle_web_invoke(
+    app: AppHandle,
+    runtime: AppRuntime,
+    command: String,
+    args: Value,
+) -> Result<Value, String> {
+    match command.as_str() {
+        "app_version" => to_json(env!("CARGO_PKG_VERSION")),
+        "ensure_storage_directories" => {
+            storage::ensure_storage_directories(
+                required_arg(&args, "serverStoragePath")?,
+                required_arg(&args, "backupStoragePath")?,
+            )?;
+            Ok(Value::Null)
+        }
+        "check_steamcmd" => to_json(steamcmd::check_steamcmd(required_arg(&args, "path")?)?),
+        "install_steamcmd" => to_json(
+            steamcmd::install_steamcmd(
+                required_arg(&args, "parentPath")?,
+                no_op_channel::<steamcmd::SteamCmdProgress>(),
+            )
+            .await?,
+        ),
+        "get_settings" => to_json(runtime.settings()?),
+        "save_settings" => {
+            let settings: GlobalSettings = required_arg(&args, "settings")?;
+            validate_settings(&settings)?;
+            to_json(runtime.save_settings(settings)?)
+        }
+        "list_instances" => to_json(
+            runtime
+                .list_instances()?
+                .into_iter()
+                .map(with_current_server_version)
+                .collect::<Vec<_>>(),
+        ),
+        "check_instance_port" => to_json(runtime.check_instance_port(
+            required_arg(&args, "port")?,
+            &required_arg::<String>(&args, "portKind")?,
+        )?),
+        "create_instance" => to_json(
+            runtime
+                .create_instance(required_arg(&args, "payload")?)
+                .map(with_current_server_version)?,
+        ),
+        "read_server_directory_config" => to_json(
+            instance_config_import::read_server_directory_config(Path::new(
+                &required_arg::<String>(&args, "path")?,
+            ))?,
+        ),
+        "get_instance_config" => to_json(runtime.get_config(&required_arg::<String>(
+            &args,
+            "instanceId",
+        )?)?),
+        "get_instance_mods" => to_json(runtime.get_mods(&required_arg::<String>(
+            &args,
+            "instanceId",
+        )?)?),
+        "save_instance_config" => {
+            let instance_id: String = required_arg(&args, "instanceId")?;
+            let config: Value = required_arg(&args, "config")?;
+            let mods: Vec<ModItem> = required_arg(&args, "mods")?;
+            to_json(with_current_server_version(save_config_for_runtime(
+                &runtime,
+                &instance_id,
+                config,
+                mods,
+            )?))
+        }
+        "apply_instance_config" => {
+            let instance_id: String = required_arg(&args, "instanceId")?;
+            let config: Value = required_arg(&args, "config")?;
+            let mods: Vec<ModItem> = required_arg(&args, "mods")?;
+            save_config_for_runtime(&runtime, &instance_id, config, mods)?;
+            to_json(restart_instance_inner(app, runtime, instance_id).await?)
+        }
+        "update_instance_mods" => {
+            let instance_id: String = required_arg(&args, "instanceId")?;
+            let mods: Vec<ModItem> = required_arg(&args, "mods")?;
+            validate_mods(&mods)?;
+            let config = runtime.get_config(&instance_id)?;
+            runtime.save_config_and_mods(&instance_id, config, mods.clone())?;
+            to_json(mods)
+        }
+        "check_mod_updates" => to_json(check_mod_updates(required_arg(&args, "mods")?)?),
+        "install_or_update_instance" => to_json(
+            install_or_update_instance_inner(
+                app,
+                runtime,
+                required_arg(&args, "instanceId")?,
+                no_op_channel::<JobProgress>(),
+            )
+            .await?,
+        ),
+        "start_instance" => to_json(
+            start_instance_inner(app, runtime, required_arg(&args, "instanceId")?).await?,
+        ),
+        "stop_instance" => to_json(stop_instance_inner(
+            app,
+            runtime,
+            required_arg(&args, "instanceId")?,
+        )?),
+        "restart_instance" => to_json(
+            restart_instance_inner(app, runtime, required_arg(&args, "instanceId")?).await?,
+        ),
+        "refresh_instance_status" => {
+            let instance_id: String = required_arg(&args, "instanceId")?;
+            to_json(refresh_status_inner(&app, &runtime, &instance_id).await?)
+        }
+        "execute_rcon_command" => {
+            to_json(
+                execute_rcon_command_inner(
+                    &app,
+                    &runtime,
+                    required_arg(&args, "instanceId")?,
+                    required_arg(&args, "command")?,
+                )
+                .await?,
+            )
+        }
+        "query_logs" => to_json(runtime.query_logs(optional_arg(&args, "limit")?)?),
+        "clear_logs" => {
+            runtime.clear_logs()?;
+            Ok(Value::Null)
+        }
+        "clear_scoped_logs" => {
+            runtime.clear_logs_by_scope(
+                required_arg(&args, "source")?,
+                optional_arg::<String>(&args, "instance")?.as_deref(),
+                optional_arg(&args, "serverLogKind")?,
+            )?;
+            Ok(Value::Null)
+        }
+        "create_backup" => to_json(create_backup_for_runtime(
+            &runtime,
+            required_arg(&args, "instanceId")?,
+        )?),
+        "list_backups" => {
+            let settings = runtime.settings()?;
+            let instance = runtime.get_instance(&required_arg::<String>(&args, "instanceId")?)?;
+            to_json(backup::list_instance_backups(
+                Path::new(&settings.backup_storage_path),
+                &instance,
+            )?)
+        }
+        "restore_backup" => {
+            let instance_id: String = required_arg(&args, "instanceId")?;
+            let backup_path: String = required_arg(&args, "backupPath")?;
+            let instance = runtime.get_instance(&instance_id)?;
+            backup::restore_instance_backup(&instance, Path::new(&backup_path))?;
+            runtime.add_log(&instance.name, "warn", &format!("已恢复备份：{backup_path}"))?;
+            Ok(Value::Null)
+        }
+        "export_instance_config" => to_json(import_export::export_instances(
+            &runtime,
+            required_arg(&args, "instanceIds")?,
+        )?),
+        "export_cluster" => to_json(import_export::export_instances(&runtime, Vec::new())?),
+        "import_instance_config" => to_json(import_export::import_instances(
+            &runtime,
+            Path::new(&required_arg::<String>(&args, "path")?),
+        )?),
+        "delete_instance" => to_json(runtime.delete_instance(&required_arg::<String>(
+            &args,
+            "instanceId",
+        )?)?),
+        "open_instance_directory" => {
+            let instance = runtime.get_instance(&required_arg::<String>(&args, "instanceId")?)?;
+            let path = Path::new(&instance.install_path);
+            if !path.exists() {
+                return Err(format!("实例目录不存在：{}", path.display()));
+            }
+            open_directory(path)?;
+            Ok(Value::Null)
+        }
+        "open_directory_path" => {
+            let path_text: String = required_arg(&args, "path")?;
+            let path = Path::new(&path_text);
+            if !path.exists() {
+                return Err(format!("目录不存在：{}", path.display()));
+            }
+            if !path.is_dir() {
+                return Err(format!("不是可打开的目录：{}", path.display()));
+            }
+            open_directory(path)?;
+            Ok(Value::Null)
+        }
+        _ => Err(format!("未知 Web API 命令：{command}")),
+    }
+}
+
+fn required_arg<T: DeserializeOwned>(args: &Value, name: &str) -> Result<T, String> {
+    let value = args
+        .get(name)
+        .ok_or_else(|| format!("缺少参数：{name}"))?
+        .clone();
+    serde_json::from_value(value).map_err(|error| format!("参数 {name} 格式无效：{error}"))
+}
+
+fn optional_arg<T: DeserializeOwned>(args: &Value, name: &str) -> Result<Option<T>, String> {
+    match args.get(name) {
+        Some(Value::Null) | None => Ok(None),
+        Some(value) => serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|error| format!("参数 {name} 格式无效：{error}")),
+    }
+}
+
+fn to_json<T: Serialize>(value: T) -> Result<Value, String> {
+    serde_json::to_value(value).map_err(|error| format!("序列化 Web API 响应失败：{error}"))
+}
+
+fn no_op_channel<T>() -> Channel<T> {
+    Channel::new(|_| Ok(()))
+}
+
+fn create_backup_for_runtime(
+    runtime: &AppRuntime,
+    instance_id: String,
+) -> Result<BackupItem, String> {
+    let settings = runtime.settings()?;
+    let instance = runtime.get_instance(&instance_id)?;
+    let backup_root = Path::new(&settings.backup_storage_path);
+    let backup = backup::create_instance_backup(backup_root, &instance)?;
+    let pruned_count =
+        backup::prune_instance_backups(backup_root, &instance, settings.max_backup_retention)?;
+    runtime.add_log(
+        &instance.name,
+        "success",
+        &format!(
+            "备份已创建：{}{}",
+            backup.path,
+            if pruned_count > 0 {
+                format!("；已按全局保留数量清理 {pruned_count} 个旧备份")
+            } else {
+                String::new()
+            }
+        ),
+    )?;
+    Ok(backup)
+}
+
 #[tauri::command]
 pub fn create_instance(
     runtime: State<'_, AppRuntime>,
     payload: AddInstancePayload,
 ) -> Result<ServerInstance, String> {
-    runtime.create_instance(payload)
+    runtime
+        .create_instance(payload)
+        .map(with_current_server_version)
 }
 
 #[tauri::command]
@@ -201,7 +465,7 @@ pub fn save_instance_config(
             applied.launch_arguments.len()
         ),
     )?;
-    Ok(instance)
+    Ok(with_current_server_version(instance))
 }
 
 #[tauri::command]
@@ -252,6 +516,15 @@ pub async fn install_or_update_instance(
     progress: Channel<JobProgress>,
 ) -> Result<ServerInstance, String> {
     let runtime = runtime.inner().clone();
+    install_or_update_instance_inner(app, runtime, instance_id, progress).await
+}
+
+async fn install_or_update_instance_inner(
+    app: AppHandle,
+    runtime: AppRuntime,
+    instance_id: String,
+    progress: Channel<JobProgress>,
+) -> Result<ServerInstance, String> {
     let mut instance = runtime.get_instance(&instance_id)?;
     let settings = runtime.settings()?;
     let steamcmd = Path::new(&settings.steam_cmd_path).join("steamcmd.exe");
@@ -312,6 +585,9 @@ pub async fn install_or_update_instance(
                 "服务端安装/更新完成",
                 Some(detail),
             )?;
+            instance.server_version =
+                read_installed_server_version(Path::new(&instance.install_path))
+                    .unwrap_or_default();
             instance.version_state = "已安装/已更新".to_string();
             instance.status = ServerStatus::Stopped;
             instance.last_error = None;
@@ -327,7 +603,7 @@ pub async fn install_or_update_instance(
                 "服务端安装/更新完成",
             )?;
             emit_status(&app, &runtime, &updated.id)?;
-            Ok(updated)
+            Ok(with_current_server_version(updated))
         }
         Err(error) => {
             let cancelled = error == UPDATE_CANCELLED_MESSAGE;
@@ -394,6 +670,75 @@ pub async fn refresh_instance_status(
 }
 
 #[tauri::command]
+pub async fn execute_rcon_command(
+    app: AppHandle,
+    runtime: State<'_, AppRuntime>,
+    instance_id: String,
+    command: String,
+) -> Result<String, String> {
+    let runtime = runtime.inner().clone();
+    execute_rcon_command_inner(&app, &runtime, instance_id, command).await
+}
+
+async fn execute_rcon_command_inner(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance_id: String,
+    command: String,
+) -> Result<String, String> {
+    let instance = runtime.get_instance(&instance_id)?;
+    if matches!(instance.status, ServerStatus::Stopped | ServerStatus::Error) {
+        return Err(format!(
+            "{} 当前不是运行状态，无法执行 RCON 命令",
+            instance.name
+        ));
+    }
+
+    let command = command.trim().trim_start_matches('/').trim().to_string();
+    if command.is_empty() {
+        return Err("RCON 命令不能为空".to_string());
+    }
+    if command.len() > 1024 {
+        return Err("RCON 命令过长，请控制在 1024 个字符以内".to_string());
+    }
+
+    let config = normalize_required_rcon_config(runtime.get_config(&instance_id)?)?;
+    let admin_password = config
+        .get("adminPassword")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if admin_password.is_empty() {
+        return Err("管理员密码为空，无法执行 RCON 命令".to_string());
+    }
+    let rcon_port = u16_from_config(&config, "rconPort", instance.rcon_port);
+
+    match rcon::execute("127.0.0.1", rcon_port, &admin_password, &command).await {
+        Ok(response) => {
+            let _ = emit_instance_log(
+                app,
+                runtime,
+                &instance.name,
+                "success",
+                &format!("RCON 命令已执行：{command}"),
+            );
+            Ok(response)
+        }
+        Err(error) => {
+            let _ = emit_instance_log(
+                app,
+                runtime,
+                &instance.name,
+                "warn",
+                &format!("RCON 命令执行失败：{command}：{error}"),
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
 pub fn query_logs(
     runtime: State<'_, AppRuntime>,
     limit: Option<usize>,
@@ -423,12 +768,22 @@ pub fn create_backup(
 ) -> Result<BackupItem, String> {
     let settings = runtime.settings()?;
     let instance = runtime.get_instance(&instance_id)?;
-    let backup =
-        backup::create_instance_backup(Path::new(&settings.backup_storage_path), &instance)?;
+    let backup_root = Path::new(&settings.backup_storage_path);
+    let backup = backup::create_instance_backup(backup_root, &instance)?;
+    let pruned_count =
+        backup::prune_instance_backups(backup_root, &instance, settings.max_backup_retention)?;
     runtime.add_log(
         &instance.name,
         "success",
-        &format!("备份已创建：{}", backup.path),
+        &format!(
+            "备份已创建：{}{}",
+            backup.path,
+            if pruned_count > 0 {
+                format!("；已按全局保留数量清理 {pruned_count} 个旧备份")
+            } else {
+                String::new()
+            }
+        ),
     )?;
     Ok(backup)
 }
@@ -822,7 +1177,7 @@ async fn start_instance_inner(
 ) -> Result<ServerInstance, String> {
     let instance = runtime.get_instance(&instance_id)?;
     if instance.status == ServerStatus::Running {
-        return Ok(instance);
+        return Ok(with_current_server_version(instance));
     }
     let config = normalize_required_rcon_config(runtime.get_config(&instance_id)?)?;
     let mods = runtime.get_mods(&instance_id)?;
@@ -833,6 +1188,8 @@ async fn start_instance_inner(
             instance.install_path
         )
     })?;
+
+    clear_instance_server_logs_before_start(&app, &runtime, &instance).await;
 
     runtime.update_instance_status(&instance_id, ServerStatus::Starting, None)?;
     emit_status(&app, &runtime, &instance_id)?;
@@ -908,7 +1265,7 @@ async fn start_instance_inner(
         instance_id.clone(),
         Instant::now(),
     ));
-    Ok(updated)
+    Ok(with_current_server_version(updated))
 }
 
 fn stop_instance_inner(
@@ -918,10 +1275,10 @@ fn stop_instance_inner(
 ) -> Result<ServerInstance, String> {
     let instance = runtime.get_instance(&instance_id)?;
     if instance.status == ServerStatus::Stopped {
-        return Ok(instance);
+        return Ok(with_current_server_version(instance));
     }
     if instance.status == ServerStatus::Stopping {
-        return Ok(instance);
+        return Ok(with_current_server_version(instance));
     }
 
     let stop_from_status = instance.status.clone();
@@ -962,7 +1319,7 @@ fn stop_instance_inner(
         }
     });
 
-    Ok(updated)
+    Ok(with_current_server_version(updated))
 }
 
 async fn stop_instance_task(
@@ -973,7 +1330,7 @@ async fn stop_instance_task(
 ) -> Result<ServerInstance, String> {
     let instance = runtime.get_instance(&instance_id)?;
     if stop_from_status == ServerStatus::Stopped {
-        return Ok(instance);
+        return Ok(with_current_server_version(instance));
     }
     if stop_from_status == ServerStatus::Updating {
         if runtime.cancel_update(&instance_id)? {
@@ -994,7 +1351,7 @@ async fn stop_instance_task(
 
         let updated = runtime.set_instance_pid(&instance_id, None, ServerStatus::Stopped)?;
         emit_status(&app, &runtime, &instance_id)?;
-        return Ok(updated);
+        return Ok(with_current_server_version(updated));
     }
 
     let config = runtime.get_config(&instance_id)?;
@@ -1040,7 +1397,109 @@ async fn stop_instance_task(
     runtime.add_log(&instance.name, "warn", "实例已停止")?;
     let updated = runtime.set_instance_pid(&instance_id, None, ServerStatus::Stopped)?;
     emit_status(&app, &runtime, &instance_id)?;
-    Ok(updated)
+    Ok(with_current_server_version(updated))
+}
+
+async fn clear_instance_server_logs_before_start(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance: &ServerInstance,
+) {
+    sleep(SERVER_LOG_POLL_INTERVAL).await;
+
+    let truncate_result = truncate_instance_game_log_files(instance);
+    let runtime_result = clear_instance_runtime_server_logs(app, runtime, &instance.name);
+
+    match (runtime_result, truncate_result) {
+        (Ok(()), Ok(truncated_count)) => {
+            let _ = emit_instance_log(
+                app,
+                runtime,
+                &instance.name,
+                "info",
+                &format!("启动前已清空服务端窗口日志，并清空 {truncated_count} 个游戏日志文件"),
+            );
+        }
+        (Ok(()), Err(error)) => {
+            let _ = emit_instance_log(
+                app,
+                runtime,
+                &instance.name,
+                "warn",
+                &format!("启动前已清空服务端窗口日志，但清空游戏日志文件失败：{error}"),
+            );
+        }
+        (Err(error), Ok(truncated_count)) => {
+            let _ = emit_instance_log(
+                app,
+                runtime,
+                &instance.name,
+                "warn",
+                &format!(
+                    "启动前已清空 {truncated_count} 个游戏日志文件，但清空服务端窗口日志失败：{error}"
+                ),
+            );
+        }
+        (Err(runtime_error), Err(file_error)) => {
+            let _ = emit_instance_log(
+                app,
+                runtime,
+                &instance.name,
+                "warn",
+                &format!(
+                    "启动前清空服务端窗口日志失败：{runtime_error}；清空游戏日志文件失败：{file_error}"
+                ),
+            );
+        }
+    }
+}
+
+fn truncate_instance_game_log_files(instance: &ServerInstance) -> Result<usize, String> {
+    let log_dir = ark_config::saved_dir(instance).join("Logs");
+    if !log_dir.exists() {
+        return Ok(0);
+    }
+
+    let entries = std::fs::read_dir(&log_dir)
+        .map_err(|error| format!("无法读取游戏日志目录 {}：{error}", log_dir.display()))?;
+    let mut truncated_count = 0_usize;
+    let mut errors = Vec::new();
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                errors.push(format!("读取游戏日志目录项失败：{error}"));
+                continue;
+            }
+        };
+        let path = entry.path();
+        if !is_server_log_candidate(&path) {
+            continue;
+        }
+        match entry.metadata() {
+            Ok(metadata) if metadata.is_file() => {}
+            Ok(_) => continue,
+            Err(error) => {
+                errors.push(format!("读取 {} 元数据失败：{error}", path.display()));
+                continue;
+            }
+        }
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&path)
+        {
+            Ok(_) => truncated_count += 1,
+            Err(error) => errors.push(format!("{}：{error}", path.display())),
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(truncated_count)
+    } else {
+        Err(errors.join("；"))
+    }
 }
 
 async fn restart_instance_inner(
@@ -1065,9 +1524,71 @@ async fn refresh_status_inner(
     instance_id: &str,
 ) -> Result<ServerInstance, String> {
     if let Some(exit_status) = take_exited_instance_process(runtime, instance_id)? {
-        return apply_exited_instance_status(app, runtime, instance_id, exit_status);
+        let should_restart = should_auto_restart_after_exit(runtime, instance_id, &exit_status);
+        let updated = apply_exited_instance_status(app, runtime, instance_id, exit_status)?;
+        if should_restart {
+            emit_instance_log(
+                app,
+                runtime,
+                &updated.name,
+                "warn",
+                "已根据全局设置和实例配置触发崩溃后自动重启",
+            )?;
+            return start_instance_inner(app.clone(), runtime.clone(), instance_id.to_string())
+                .await;
+        }
+        return Ok(updated);
     }
-    runtime.get_instance(instance_id)
+    let instance = runtime.get_instance(instance_id)?;
+    refresh_instance_players(runtime, instance)
+        .await
+        .map(with_current_server_version)
+}
+
+async fn refresh_instance_players(
+    runtime: &AppRuntime,
+    instance: ServerInstance,
+) -> Result<ServerInstance, String> {
+    if matches!(instance.status, ServerStatus::Stopped | ServerStatus::Error) {
+        return if instance.players == 0 {
+            Ok(instance)
+        } else {
+            runtime.update_instance_players(&instance.id, 0)
+        };
+    }
+
+    if !matches!(
+        instance.status,
+        ServerStatus::Running | ServerStatus::Starting
+    ) {
+        return Ok(instance);
+    }
+
+    let Ok(config) = normalize_required_rcon_config(runtime.get_config(&instance.id)?) else {
+        return Ok(instance);
+    };
+    let admin_password = config
+        .get("adminPassword")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if admin_password.is_empty() {
+        return Ok(instance);
+    }
+
+    let rcon_port = u16_from_config(&config, "rconPort", instance.rcon_port);
+    match timeout(
+        PLAYER_COUNT_POLL_TIMEOUT,
+        rcon::execute("127.0.0.1", rcon_port, &admin_password, "ListPlayers"),
+    )
+    .await
+    {
+        Ok(Ok(response)) => {
+            runtime.update_instance_players(&instance.id, parse_list_players_count(&response))
+        }
+        Ok(Err(_)) | Err(_) => Ok(instance),
+    }
 }
 
 async fn monitor_startup_readiness(
@@ -1125,16 +1646,17 @@ async fn monitor_startup_readiness(
         };
 
         match probe_server_readiness(&instance, &config).await {
-            Ok(method) => {
+            Ok(probe) => {
                 let _ = emit_instance_log(
                     &app,
                     &runtime,
                     &instance.name,
                     "success",
-                    &format!("启动探测通过：{method}，实例已进入运行中"),
+                    &format!("启动探测通过：{}，实例已进入运行中", probe.method),
                 );
                 match runtime.set_instance_pid(&instance_id, instance.pid, ServerStatus::Running) {
                     Ok(_) => {
+                        let _ = runtime.update_instance_players(&instance_id, probe.players);
                         let _ = emit_status(&app, &runtime, &instance_id);
                     }
                     Err(error) => {
@@ -1230,13 +1752,45 @@ fn apply_exited_instance_status(
         runtime.set_instance_pid(instance_id, None, ServerStatus::Stopped)?
     };
     emit_status(app, runtime, instance_id)?;
-    Ok(updated)
+    Ok(with_current_server_version(updated))
+}
+
+fn should_auto_restart_after_exit(
+    runtime: &AppRuntime,
+    instance_id: &str,
+    exit_status: &ExitStatus,
+) -> bool {
+    if exit_status.success() {
+        return false;
+    }
+
+    runtime
+        .get_instance(instance_id)
+        .map(|instance| {
+            instance.status == ServerStatus::Running
+                && should_auto_restart_after_crash(runtime, &instance)
+        })
+        .unwrap_or(false)
+}
+
+fn should_auto_restart_after_crash(runtime: &AppRuntime, instance: &ServerInstance) -> bool {
+    let Ok(settings) = runtime.settings() else {
+        return false;
+    };
+    if !settings.auto_restart_on_crash {
+        return false;
+    }
+
+    runtime
+        .get_config(&instance.id)
+        .map(|config| bool_from_config(&config, "restartOnCrash", true))
+        .unwrap_or(false)
 }
 
 async fn probe_server_readiness(
     instance: &ServerInstance,
     config: &Value,
-) -> Result<String, String> {
+) -> Result<ReadinessProbe, String> {
     let rcon_enabled = bool_from_config(config, "rconEnabled", true);
     let admin_password = config
         .get("adminPassword")
@@ -1251,10 +1805,48 @@ async fn probe_server_readiness(
     }
 
     let rcon_port = u16_from_config(config, "rconPort", instance.rcon_port);
-    rcon::execute("127.0.0.1", rcon_port, admin_password, "ListPlayers")
+    let response = rcon::execute("127.0.0.1", rcon_port, admin_password, "ListPlayers")
         .await
-        .map(|_| format!("RCON ListPlayers 127.0.0.1:{rcon_port}"))
-        .map_err(|error| format!("RCON 未就绪：{error}"))
+        .map_err(|error| format!("RCON 未就绪：{error}"))?;
+    Ok(ReadinessProbe {
+        method: format!("RCON ListPlayers 127.0.0.1:{rcon_port}"),
+        players: parse_list_players_count(&response),
+    })
+}
+
+fn parse_list_players_count(response: &str) -> u32 {
+    let trimmed = response.trim();
+    if trimmed.is_empty() {
+        return 0;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("no players") || lower.contains("no player connected") {
+        return 0;
+    }
+
+    let indexed_players = response
+        .lines()
+        .filter(|line| is_indexed_player_line(line))
+        .count();
+    if indexed_players > 0 {
+        return indexed_players as u32;
+    }
+
+    response
+        .lines()
+        .filter(|line| {
+            let lower = line.to_ascii_lowercase();
+            lower.contains("uniquenetid") || lower.contains("steamid") || lower.contains("eosid")
+        })
+        .count() as u32
+}
+
+fn is_indexed_player_line(line: &str) -> bool {
+    let Some((index, detail)) = line.trim_start().split_once('.') else {
+        return false;
+    };
+    !detail.trim().is_empty() && index.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn attach_process_log_reader<R>(
@@ -1272,6 +1864,7 @@ fn attach_process_log_reader<R>(
     };
     let app = app.clone();
     let runtime = runtime.clone();
+    let instance_id = instance.id.clone();
     let instance_name = instance.name.clone();
     tokio::spawn(async move {
         let mut stream = stream;
@@ -1291,6 +1884,7 @@ fn attach_process_log_reader<R>(
                     handle_server_log_line(
                         &app,
                         &runtime,
+                        &instance_id,
                         &instance_name,
                         level,
                         ServerLogKind::Console,
@@ -1305,6 +1899,7 @@ fn attach_process_log_reader<R>(
                         handle_server_log_line(
                             &app,
                             &runtime,
+                            &instance_id,
                             &instance_name,
                             level,
                             ServerLogKind::Console,
@@ -1322,6 +1917,7 @@ fn attach_process_log_reader<R>(
             handle_server_log_line(
                 &app,
                 &runtime,
+                &instance_id,
                 &instance_name,
                 level,
                 ServerLogKind::Console,
@@ -1409,6 +2005,7 @@ async fn tail_server_log_directory(
             &mut pending,
             &app,
             &runtime,
+            &instance_id,
             &instance_name,
             &deduper,
         )
@@ -1489,6 +2086,7 @@ async fn read_new_server_log_bytes(
     pending: &mut Vec<u8>,
     app: &AppHandle,
     runtime: &AppRuntime,
+    instance_id: &str,
     instance_name: &str,
     deduper: &SharedServerLogDeduper,
 ) -> Result<u64, String> {
@@ -1516,6 +2114,7 @@ async fn read_new_server_log_bytes(
                 handle_server_log_line(
                     app,
                     runtime,
+                    instance_id,
                     instance_name,
                     "info",
                     ServerLogKind::File,
@@ -1530,6 +2129,7 @@ async fn read_new_server_log_bytes(
                     handle_server_log_line(
                         app,
                         runtime,
+                        instance_id,
                         instance_name,
                         "info",
                         ServerLogKind::File,
@@ -1547,6 +2147,7 @@ async fn read_new_server_log_bytes(
 fn handle_server_log_line(
     app: &AppHandle,
     runtime: &AppRuntime,
+    instance_id: &str,
     instance_name: &str,
     fallback_level: &'static str,
     server_log_kind: ServerLogKind,
@@ -1556,6 +2157,11 @@ fn handle_server_log_line(
     let line = line.trim();
     if line.is_empty() || should_skip_duplicate_server_log(deduper, line) {
         return;
+    }
+    if let Some(server_version) = parse_asa_server_version(line) {
+        if let Ok(updated) = runtime.update_instance_server_version(instance_id, server_version) {
+            let _ = app.emit("asa:instance-status", with_current_server_version(updated));
+        }
     }
     let level = classify_server_log_level(line, fallback_level);
     let _ = emit_server_log(app, runtime, instance_name, level, line, server_log_kind);
@@ -1640,9 +2246,35 @@ fn is_instance_process_tracked(runtime: &AppRuntime, instance_id: &str) -> bool 
 }
 
 fn emit_status(app: &AppHandle, runtime: &AppRuntime, instance_id: &str) -> Result<(), String> {
-    let instance = runtime.get_instance(instance_id)?;
+    let instance = with_current_server_version(runtime.get_instance(instance_id)?);
     app.emit("asa:instance-status", instance)
         .map_err(|error| format!("发送实例状态事件失败：{error}"))
+}
+
+fn emit_logs_cleared(
+    app: &AppHandle,
+    source: LogSource,
+    instance: Option<&str>,
+    server_log_kind: Option<ServerLogKind>,
+) -> Result<(), String> {
+    app.emit(
+        "asa:logs-cleared",
+        LogClearScope {
+            source,
+            instance: instance.map(str::to_string),
+            server_log_kind,
+        },
+    )
+    .map_err(|error| format!("发送日志清理事件失败：{error}"))
+}
+
+fn clear_instance_runtime_server_logs(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance_name: &str,
+) -> Result<(), String> {
+    runtime.clear_logs_by_scope(LogSource::Server, Some(instance_name), None)?;
+    emit_logs_cleared(app, LogSource::Server, Some(instance_name), None)
 }
 
 fn emit_instance_log(
@@ -1728,10 +2360,28 @@ fn validate_settings(settings: &GlobalSettings) -> Result<(), String> {
     if settings.backup_storage_path.trim().is_empty() {
         return Err("备份存储目录不能为空".to_string());
     }
-    std::fs::create_dir_all(&settings.server_storage_path)
-        .map_err(|error| format!("无法创建服务器存储目录：{error}"))?;
-    std::fs::create_dir_all(&settings.backup_storage_path)
-        .map_err(|error| format!("无法创建备份存储目录：{error}"))?;
+    validate_optional_directory(&settings.server_storage_path, "服务器存储目录")?;
+    validate_optional_directory(&settings.backup_storage_path, "备份存储目录")?;
+    if !matches!(settings.language.as_str(), "zh-CN" | "en-US") {
+        return Err("应用语言仅支持 zh-CN 或 en-US".to_string());
+    }
+    if !matches!(settings.theme.as_str(), "dark" | "light" | "system") {
+        return Err("应用主题仅支持 dark、light 或 system".to_string());
+    }
+    if !(1..=100).contains(&settings.max_backup_retention) {
+        return Err("自动备份保留数量必须在 1-100 之间".to_string());
+    }
+    if !(1024..=65535).contains(&settings.web_server_port) {
+        return Err("Web 访问端口必须在 1024-65535 之间".to_string());
+    }
+    Ok(())
+}
+
+fn validate_optional_directory(path: &str, label: &str) -> Result<(), String> {
+    let path = Path::new(path);
+    if path.exists() && !path.is_dir() {
+        return Err(format!("{label}不是目录：{}", path.display()));
+    }
     Ok(())
 }
 
@@ -1999,19 +2649,206 @@ fn parse_steamcmd_progress_line(line: &str) -> Option<ParsedSteamCmdProgress> {
     })
 }
 
-fn acf_u64(content: &str, key: &str) -> Option<u64> {
+fn server_appmanifest_path(install_path: &Path) -> PathBuf {
+    install_path
+        .join("steamapps")
+        .join(format!("appmanifest_{ASA_DEDICATED_SERVER_APP_ID}.acf"))
+}
+
+fn acf_string(content: &str, key: &str) -> Option<String> {
     content.lines().find_map(|line| {
         let mut parts = line.split('"');
         let _ = parts.next()?;
         let found_key = parts.next()?;
         let _ = parts.next()?;
         let value = parts.next()?;
-        if found_key == key {
-            value.parse::<u64>().ok()
+        let value = value.trim();
+        if found_key.eq_ignore_ascii_case(key) && !value.is_empty() {
+            Some(value.to_string())
         } else {
             None
         }
     })
+}
+
+fn acf_u64(content: &str, key: &str) -> Option<u64> {
+    acf_string(content, key).and_then(|value| value.parse::<u64>().ok())
+}
+
+fn read_installed_server_version(install_path: &Path) -> Option<String> {
+    read_known_server_version_file(install_path)
+        .or_else(|| read_latest_saved_log_server_version(install_path))
+}
+
+fn with_current_server_version(mut instance: ServerInstance) -> ServerInstance {
+    instance.server_version = read_installed_server_version(Path::new(&instance.install_path))
+        .or_else(|| normalize_server_version_value(&instance.server_version))
+        .unwrap_or_default();
+    instance
+}
+
+fn read_known_server_version_file(install_path: &Path) -> Option<String> {
+    [
+        install_path
+            .join("ShooterGame")
+            .join("Binaries")
+            .join("Win64")
+            .join("ArkAscendedServer.version"),
+        install_path
+            .join("ShooterGame")
+            .join("Binaries")
+            .join("Win64")
+            .join("Build.version"),
+        install_path.join("ShooterGame").join("Build.version"),
+        install_path.join("version.txt"),
+    ]
+    .into_iter()
+    .find_map(|path| {
+        if !path.is_file() {
+            return None;
+        }
+        read_recent_file_text(&path, SERVER_VERSION_SCAN_BYTES)
+            .ok()
+            .and_then(|content| parse_asa_server_version(&content))
+    })
+}
+
+fn read_latest_saved_log_server_version(install_path: &Path) -> Option<String> {
+    let log_dir = install_path.join("ShooterGame").join("Saved").join("Logs");
+    let entries = std::fs::read_dir(log_dir).ok()?;
+    let latest = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !is_server_log_candidate(&path) {
+                return None;
+            }
+            let metadata = entry.metadata().ok()?;
+            if !metadata.is_file() {
+                return None;
+            }
+            Some((metadata.modified().unwrap_or(UNIX_EPOCH), path))
+        })
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path)?;
+
+    read_recent_file_text(&latest, SERVER_VERSION_SCAN_BYTES)
+        .ok()
+        .and_then(|content| parse_asa_server_version(&content))
+}
+
+fn read_recent_file_text(path: &Path, max_bytes: u64) -> Result<String, String> {
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| format!("无法打开版本候选文件 {}：{error}", path.display()))?;
+    let len = file
+        .metadata()
+        .map_err(|error| format!("无法读取版本候选文件元数据 {}：{error}", path.display()))?
+        .len();
+    let start = len.saturating_sub(max_bytes);
+    file.seek(std::io::SeekFrom::Start(start))
+        .map_err(|error| format!("无法定位版本候选文件 {}：{error}", path.display()))?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)
+        .map_err(|error| format!("无法读取版本候选文件 {}：{error}", path.display()))?;
+    Ok(String::from_utf8_lossy(&buffer).into_owned())
+}
+
+fn parse_asa_server_version(content: &str) -> Option<String> {
+    content
+        .lines()
+        .rev()
+        .find_map(parse_asa_server_version_line)
+}
+
+fn normalize_server_version_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    scan_semantic_version(value, 0, true).or_else(|| scan_semantic_version(value, 0, false))
+}
+
+fn parse_asa_server_version_line(line: &str) -> Option<String> {
+    if let Some(version) = scan_semantic_version(line, 0, true) {
+        return Some(version);
+    }
+
+    let lower = line.to_ascii_lowercase();
+    [
+        "server version",
+        "servers version",
+        "buildversion",
+        "version",
+    ]
+    .into_iter()
+    .filter_map(|anchor| lower.find(anchor).map(|index| index + anchor.len()))
+    .min()
+    .and_then(|start| scan_semantic_version(line, start, false))
+}
+
+fn scan_semantic_version(source: &str, start: usize, require_v_prefix: bool) -> Option<String> {
+    let bytes = source.as_bytes();
+    let mut index = start.min(bytes.len());
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if matches!(byte, b'v' | b'V') {
+            if is_version_boundary_before(bytes, index) {
+                if let Some(version) = parse_numeric_version_at(bytes, index + 1, index) {
+                    return Some(version);
+                }
+            }
+        } else if !require_v_prefix
+            && byte.is_ascii_digit()
+            && is_version_boundary_before(bytes, index)
+        {
+            if let Some(version) = parse_numeric_version_at(bytes, index, index) {
+                return Some(version);
+            }
+        }
+        index += 1;
+    }
+    None
+}
+
+fn parse_numeric_version_at(
+    bytes: &[u8],
+    number_start: usize,
+    boundary_start: usize,
+) -> Option<String> {
+    let major_start = number_start;
+    let mut dot_index = major_start;
+    while dot_index < bytes.len() && bytes[dot_index].is_ascii_digit() {
+        dot_index += 1;
+    }
+    let major_len = dot_index.checked_sub(major_start)?;
+    if major_len == 0 || major_len > 4 || bytes.get(dot_index) != Some(&b'.') {
+        return None;
+    }
+
+    let minor_start = dot_index + 1;
+    let mut end = minor_start;
+    while end < bytes.len() && bytes[end].is_ascii_digit() {
+        end += 1;
+    }
+    let minor_len = end.checked_sub(minor_start)?;
+    if minor_len == 0 || minor_len > 4 || !is_version_boundary_after(bytes, end) {
+        return None;
+    }
+
+    let major = std::str::from_utf8(&bytes[major_start..dot_index]).ok()?;
+    let minor = std::str::from_utf8(&bytes[minor_start..end]).ok()?;
+    if boundary_start > 0 && bytes[boundary_start - 1].is_ascii_alphanumeric() {
+        return None;
+    }
+    Some(format!("v{major}.{minor}"))
+}
+
+fn is_version_boundary_before(bytes: &[u8], index: usize) -> bool {
+    index == 0 || (!bytes[index - 1].is_ascii_alphanumeric() && bytes[index - 1] != b'.')
+}
+
+fn is_version_boundary_after(bytes: &[u8], index: usize) -> bool {
+    index == bytes.len() || (!bytes[index].is_ascii_alphanumeric() && bytes[index] != b'.')
 }
 
 fn parse_manifest_progress(content: &str) -> Option<ManifestProgress> {
@@ -2050,9 +2887,7 @@ fn spawn_manifest_progress_monitor(
     progress: SteamCmdProgressSink,
     stop: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
-    let manifest_path = install_path
-        .join("steamapps")
-        .join(format!("appmanifest_{ASA_DEDICATED_SERVER_APP_ID}.acf"));
+    let manifest_path = server_appmanifest_path(install_path);
     let downloading_path = install_path
         .join("steamapps")
         .join("downloading")
@@ -2374,6 +3209,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn listplayers_empty_response_counts_zero() {
+        assert_eq!(parse_list_players_count(""), 0);
+        assert_eq!(parse_list_players_count("No Players Connected"), 0);
+    }
+
+    #[test]
+    fn listplayers_indexed_rows_are_counted() {
+        let response = "0. Mango, 0002fb4340044418b2898e39b\n1. Survivor, 76561198000000000";
+
+        assert_eq!(parse_list_players_count(response), 2);
+    }
+
+    #[test]
+    fn listplayers_unique_net_id_rows_are_counted() {
+        let response = "Mango [UniqueNetId:0002fb4340044418b2898e39b]\nBob [UniqueNetId:0002fb4340044418b2898e40c]";
+
+        assert_eq!(parse_list_players_count(response), 2);
+    }
+
+    #[test]
     fn parses_steamcmd_download_progress() {
         let parsed = parse_steamcmd_progress_line(
             "Update state (0x61) downloading, Progress: 12.34 (1234000 / 10000000)",
@@ -2415,6 +3270,49 @@ mod tests {
         assert_eq!(parsed.phase, "downloading");
         assert_eq!(parsed.downloaded_bytes, 1_678_229_152);
         assert_eq!(parsed.total_bytes, Some(8_248_424_336));
+    }
+
+    #[test]
+    fn parses_official_asa_server_version_text() {
+        assert_eq!(
+            parse_asa_server_version("Current ARK Official Server Network Servers Version: v89.24")
+                .as_deref(),
+            Some("v89.24")
+        );
+        assert_eq!(
+            parse_asa_server_version("2026.07.03 Log: Server Version: 89.24").as_deref(),
+            Some("v89.24")
+        );
+        assert_eq!(
+            parse_asa_server_version(r#"{ "BuildVersion": "++ArkAscended+Release-89.24" }"#)
+                .as_deref(),
+            Some("v89.24")
+        );
+        assert_eq!(
+            parse_asa_server_version(r#""buildid"        "17824567""#),
+            None
+        );
+        assert_eq!(
+            normalize_server_version_value("89.24").as_deref(),
+            Some("v89.24")
+        );
+    }
+
+    #[test]
+    fn reads_installed_server_version_from_saved_server_log() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let log_dir = temp.path().join("ShooterGame").join("Saved").join("Logs");
+        std::fs::create_dir_all(&log_dir).expect("创建日志目录");
+        std::fs::write(
+            log_dir.join("server.log"),
+            "Current ARK Official Server Network Servers Version: v89.24",
+        )
+        .expect("写入服务端日志");
+
+        assert_eq!(
+            read_installed_server_version(temp.path()).as_deref(),
+            Some("v89.24")
+        );
     }
 
     #[test]
@@ -2476,6 +3374,58 @@ mod tests {
         assert_eq!(
             classify_server_log_level("Fatal error: Failed to bind server port", "info"),
             "error"
+        );
+    }
+
+    #[test]
+    fn 清空游戏日志文件只截断实例日志目录中的候选文件() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let log_dir = temp.path().join("ShooterGame").join("Saved").join("Logs");
+        std::fs::create_dir_all(&log_dir).expect("创建日志目录");
+        let log_path = log_dir.join("server.log");
+        let txt_path = log_dir.join("game.txt");
+        let keep_path = log_dir.join("readme.md");
+        std::fs::write(&log_path, "旧服务端日志").expect("写入 log");
+        std::fs::write(&txt_path, "旧游戏日志").expect("写入 txt");
+        std::fs::write(&keep_path, "保留内容").expect("写入非日志文件");
+
+        let instance = ServerInstance {
+            id: "island".to_string(),
+            name: "孤岛".to_string(),
+            map: "The Island".to_string(),
+            map_code: "TheIsland_WP".to_string(),
+            mode: "PvE".to_string(),
+            status: ServerStatus::Stopped,
+            game_port: 7777,
+            query_port: 27015,
+            players: 0,
+            max_players: 70,
+            install_path: temp.path().to_string_lossy().into_owned(),
+            rcon_port: 27020,
+            cluster_id: "cluster".to_string(),
+            description: String::new(),
+            pid: None,
+            last_started_at: None,
+            last_stopped_at: None,
+            server_version: String::new(),
+            version_state: "已安装".to_string(),
+            last_error: None,
+        };
+
+        let truncated_count = truncate_instance_game_log_files(&instance).expect("清空日志文件");
+
+        assert_eq!(truncated_count, 2);
+        assert_eq!(
+            std::fs::metadata(log_path).expect("读取 log 元数据").len(),
+            0
+        );
+        assert_eq!(
+            std::fs::metadata(txt_path).expect("读取 txt 元数据").len(),
+            0
+        );
+        assert_eq!(
+            std::fs::read_to_string(keep_path).expect("读取非日志文件"),
+            "保留内容"
         );
     }
 }

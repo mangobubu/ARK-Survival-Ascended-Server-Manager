@@ -9,6 +9,7 @@ export const defaultGlobalSettings: GlobalSettings = {
   autoUpdateOnStart: true,
   autoRestartOnCrash: true,
   maxBackupRetention: 7,
+  webServerPort: 18080,
 }
 
 export const initialInstances: ServerInstance[] = []
@@ -73,7 +74,7 @@ export const defaultConfig: ServerConfig = {
   dayCycleSpeed: 1, dayTimeSpeed: 1, nightTimeSpeed: 1.5, resourceRespawn: 0.7,
   resourceNoReplenishRadiusPlayers: 1, resourceNoReplenishRadiusStructures: 1, dinoCount: 1, maxTamedDinos: 5000, destroyWildDinos: false,
   cropGrowthSpeedMultiplier: 1, cropDecaySpeedMultiplier: 1, supplyCrateLootQualityMultiplier: 1, fishingLootQualityMultiplier: 1,
-  fuelConsumptionIntervalMultiplier: 1, itemStackSizeMultiplier: 1, globalSpoilingTimeMultiplier: 1,
+  fuelConsumptionIntervalMultiplier: 1, itemStackSizeMultiplier: 1, itemStackOverrides: [], globalSpoilingTimeMultiplier: 1,
   globalItemDecompositionTimeMultiplier: 1, globalCorpseDecompositionTimeMultiplier: 1,
   matingInterval: 0.25, matingSpeedMultiplier: 1, eggHatchSpeed: 10, babyMatureSpeed: 20, cuddleInterval: 0.1, babyFoodConsumption: 0.5,
   layEggIntervalMultiplier: 1, babyCuddleGracePeriodMultiplier: 1, babyCuddleLoseImprintQualitySpeedMultiplier: 1,

@@ -4,6 +4,7 @@ import {
   CheckCircleOutlined,
   CloudDownloadOutlined,
   CloudServerOutlined,
+  CodeOutlined,
   DatabaseOutlined,
   DeleteOutlined,
   EditOutlined,
@@ -27,11 +28,13 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { Button, Checkbox, Dropdown, Empty, message, Modal, Progress, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { MenuProps } from 'antd'
+import AddInstanceWindow from './AddInstanceWindow'
 import ConfigPanel from './ConfigPanel'
 import { defaultConfig } from './data'
 import {
   applyInstanceConfig,
   checkModUpdates,
+  checkSteamCmd,
   clearLogs,
   clearScopedLogs,
   createBackup,
@@ -52,27 +55,44 @@ import {
   stopInstance as stopInstanceCommand,
 } from './backendApi'
 import { loadGlobalSettings, loadGlobalSettingsFromBackend, subscribeGlobalSettings } from './globalSettings'
+import RconWindow from './RconWindow'
+import { isTauriRuntime } from './runtime'
+import SettingsWindow from './SettingsWindow'
 import SteamCmdSetup from './SteamCmdSetup'
 import type {
   GlobalSettings,
   InstanceCreatedEvent,
   JobProgress,
+  LogClearScope,
   LogLine,
   ModItem,
   ServerConfig,
   ServerInstance,
   ServerStatus,
 } from './types'
-import { ADD_INSTANCE_CREATED_EVENT, ADD_INSTANCE_WINDOW_LABEL } from './windowEvents'
+import { ADD_INSTANCE_CREATED_EVENT, ADD_INSTANCE_WINDOW_LABEL, MAIN_WINDOW_LABEL, RCON_WINDOW_LABEL_PREFIX } from './windowEvents'
 
 const { Text } = Typography
 const APPLICATION_LOG_TAB_KEY = 'application'
 const SERVER_CONSOLE_LOG_KIND = 'console'
 const SERVER_FILE_LOG_KIND = 'file'
+const PLAYER_STATUS_POLL_INTERVAL_MS = 5_000
 type ServerLogKind = NonNullable<LogLine['serverLogKind']>
+type WebDialogState =
+  | { type: 'settings' }
+  | { type: 'add-instance'; params: URLSearchParams }
+  | { type: 'rcon'; instance: ServerInstance }
+  | null
 
 function getServerLogKind(line: LogLine): ServerLogKind {
   return line.serverLogKind ?? SERVER_CONSOLE_LOG_KIND
+}
+
+function matchesLogClearScope(line: LogLine, scope: LogClearScope) {
+  if (line.source !== scope.source) return false
+  if (scope.instance && line.instance !== scope.instance) return false
+  if (scope.serverLogKind && getServerLogKind(line) !== scope.serverLogKind) return false
+  return true
 }
 
 const mapGlyphs: Record<string, string> = {
@@ -117,6 +137,12 @@ function statusMeta(status: ServerStatus) {
 
 function canDeleteInstance(status: ServerStatus) {
   return status === 'stopped' || status === 'error'
+}
+
+function formatServerVersion(serverVersion?: string | null, versionState?: string) {
+  const normalized = serverVersion?.trim()
+  if (normalized) return normalized.toLowerCase().startsWith('v') ? normalized : `v${normalized}`
+  return versionState === '未安装' ? '未安装' : '未识别'
 }
 
 function enforceRequiredRconConfig(config: ServerConfig): ServerConfig {
@@ -341,14 +367,18 @@ export default function App() {
   const [logs, setLogs] = useState<LogLine[]>([])
   const [dirty, setDirty] = useState(false)
   const [globalSettings, setGlobalSettings] = useState<GlobalSettings>(loadGlobalSettings)
+  const [initialDataReady, setInitialDataReady] = useState(false)
   const [jobProgress, setJobProgress] = useState<Record<string, JobProgress>>({})
   const [checkingMods, setCheckingMods] = useState(false)
   const [autoScrollLogs, setAutoScrollLogs] = useState(true)
   const [activeLogTab, setActiveLogTab] = useState(APPLICATION_LOG_TAB_KEY)
+  const [webDialog, setWebDialog] = useState<WebDialogState>(null)
   const applicationLogConsoleRef = useRef<HTMLDivElement>(null)
   const serverConsoleLogConsoleRef = useRef<HTMLDivElement>(null)
   const serverFileLogConsoleRef = useRef<HTMLDivElement>(null)
   const instancesRef = useRef<ServerInstance[]>([])
+  const statusPollInFlightRef = useRef(false)
+  const startupAutoUpdateRanRef = useRef(false)
   const steamCmdProgressSamplesRef = useRef<Record<string, { downloadedBytes: number; timestamp: number }>>({})
   const [messageApi, contextHolder] = message.useMessage()
   const [modal, modalContext] = Modal.useModal()
@@ -375,9 +405,10 @@ export default function App() {
     return (activeLogs?.console.length ?? 0) + (activeLogs?.file.length ?? 0)
   }, [activeLogTab, applicationLogs.length, instances, serverLogsByInstanceName])
   const handleClearApplicationLogs = useCallback(async () => {
+    const scope: LogClearScope = { source: 'application' }
     try {
-      await clearScopedLogs({ source: 'application' })
-      setLogs((current) => current.filter((line) => line.source !== 'application'))
+      await clearScopedLogs(scope)
+      setLogs((current) => current.filter((line) => !matchesLogClearScope(line, scope)))
       messageApi.success('已清除应用日志')
     } catch (error) {
       messageApi.error(`清除应用日志失败：${String(error)}`)
@@ -385,13 +416,10 @@ export default function App() {
   }, [messageApi])
   const handleClearServerLogs = useCallback(async (instanceName: string, serverLogKind: ServerLogKind) => {
     const kindText = serverLogKind === SERVER_FILE_LOG_KIND ? '游戏日志文件' : '服务端窗口日志'
+    const scope: LogClearScope = { source: 'server', instance: instanceName, serverLogKind }
     try {
-      await clearScopedLogs({ source: 'server', instance: instanceName, serverLogKind })
-      setLogs((current) => current.filter((line) => (
-        line.source !== 'server'
-        || line.instance !== instanceName
-        || getServerLogKind(line) !== serverLogKind
-      )))
+      await clearScopedLogs(scope)
+      setLogs((current) => current.filter((line) => !matchesLogClearScope(line, scope)))
       messageApi.success(`已清除 ${instanceName} 的${kindText}`)
     } catch (error) {
       messageApi.error(`清除${kindText}失败：${String(error)}`)
@@ -452,10 +480,40 @@ export default function App() {
   }, [activeLogTab, instances])
 
   const replaceInstance = useCallback((next: ServerInstance) => {
-    setInstances((current) => current.some((item) => item.id === next.id)
-      ? current.map((item) => item.id === next.id ? next : item)
-      : [...current, next])
+    setInstances((current) => {
+      const updated = current.some((item) => item.id === next.id)
+        ? current.map((item) => item.id === next.id ? next : item)
+        : [...current, next]
+      instancesRef.current = updated
+      return updated
+    })
   }, [])
+
+  const pollLiveInstanceStatus = useCallback(async () => {
+    if (statusPollInFlightRef.current) return
+
+    const liveInstanceIds = instancesRef.current
+      .filter((item) => item.status === 'running' || item.status === 'starting')
+      .map((item) => item.id)
+    if (liveInstanceIds.length === 0) return
+
+    statusPollInFlightRef.current = true
+    try {
+      const results = await Promise.allSettled(liveInstanceIds.map((id) => refreshInstanceStatus(id)))
+      results.forEach((result) => {
+        if (result.status === 'fulfilled') replaceInstance(result.value)
+      })
+    } finally {
+      statusPollInFlightRef.current = false
+    }
+  }, [replaceInstance])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void pollLiveInstanceStatus()
+    }, PLAYER_STATUS_POLL_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [pollLiveInstanceStatus])
 
   const appendLogLine = useCallback((line: LogLine) => {
     setLogs((current) => [...current, line].slice(-500))
@@ -536,6 +594,8 @@ export default function App() {
       refreshLogs(),
     ]).then(([settings]) => setGlobalSettings(settings)).catch((error) => {
       messageApi.error(`初始化管理器状态失败：${String(error)}`)
+    }).finally(() => {
+      setInitialDataReady(true)
     })
     return unsubscribe
   }, [loadInstances, messageApi, refreshLogs])
@@ -559,6 +619,8 @@ export default function App() {
   }, [activeLogLineCount, activeLogTab, autoScrollLogs])
 
   useEffect(() => {
+    if (!isTauriRuntime()) return undefined
+
     let disposed = false
     const unlisteners: Array<() => void> = []
 
@@ -566,6 +628,12 @@ export default function App() {
       if (!disposed) {
         appendLogLine(event.payload)
         updateJobProgressFromLog(event.payload)
+      }
+    }).then((unlisten) => unlisteners.push(unlisten))
+
+    void listen<LogClearScope>('asa:logs-cleared', (event) => {
+      if (!disposed) {
+        setLogs((current) => current.filter((line) => !matchesLogClearScope(line, event.payload)))
       }
     }).then((unlisten) => unlisteners.push(unlisten))
 
@@ -601,6 +669,18 @@ export default function App() {
       unlisteners.forEach((unlisten) => unlisten())
     }
   }, [appendLogLine, loadInstanceDetails, messageApi, refreshLogs, replaceInstance, updateJobProgressFromLog])
+
+  useEffect(() => {
+    if (isTauriRuntime()) return undefined
+
+    const timer = window.setInterval(() => {
+      void Promise.all([loadInstances(), refreshLogs()]).catch((error) => {
+        console.error('刷新 Web 版状态失败', error)
+      })
+    }, 3_000)
+
+    return () => window.clearInterval(timer)
+  }, [loadInstances, refreshLogs])
 
   const installInstance = async (item: ServerInstance) => {
     try {
@@ -651,6 +731,41 @@ export default function App() {
       await refreshLogs()
     }
   }
+
+  useEffect(() => {
+    if (!initialDataReady || startupAutoUpdateRanRef.current) return
+    startupAutoUpdateRanRef.current = true
+    if (!globalSettings.autoUpdateOnStart) return
+
+    void (async () => {
+      const steamCmd = await checkSteamCmd(globalSettings.steamCmdPath)
+      if (!steamCmd.valid) {
+        messageApi.warning('启动时检查更新已跳过：SteamCMD 尚未配置或不可用')
+        return
+      }
+
+      const candidates: ServerInstance[] = []
+      for (const item of instancesRef.current) {
+        if (!['stopped', 'error'].includes(item.status)) continue
+        try {
+          const instanceConfig = await getInstanceConfig(item.id)
+          if (instanceConfig.autoUpdateServer ?? true) {
+            candidates.push(item)
+          }
+        } catch (error) {
+          messageApi.warning(`${item.name} 启动时检查更新配置读取失败：${String(error)}`)
+        }
+      }
+
+      if (candidates.length === 0) return
+      messageApi.info(`启动时检查更新：将依次检查/更新 ${candidates.length} 个启用自动更新的实例`)
+      for (const item of candidates) {
+        await installInstance(item)
+      }
+    })().catch((error) => {
+      messageApi.error(`启动时检查更新失败：${String(error)}`)
+    })
+  }, [globalSettings.autoUpdateOnStart, globalSettings.steamCmdPath, initialDataReady, messageApi])
 
   const startInstance = async (item: ServerInstance) => {
     try {
@@ -787,12 +902,6 @@ export default function App() {
 
   const openAddInstanceWindow = async () => {
     try {
-      const existing = await WebviewWindow.getByLabel(ADD_INSTANCE_WINDOW_LABEL)
-      if (existing) {
-        await existing.setFocus()
-        return
-      }
-
       const nextIndex = instances.length + 1
       const lastInstance = instances.at(-1)
       const params = new URLSearchParams({
@@ -803,6 +912,17 @@ export default function App() {
         rconPort: String((lastInstance?.rconPort ?? 32330) + 10),
         serverRoot: globalSettings.serverStoragePath,
       })
+
+      if (!isTauriRuntime()) {
+        setWebDialog({ type: 'add-instance', params })
+        return
+      }
+
+      const existing = await WebviewWindow.getByLabel(ADD_INSTANCE_WINDOW_LABEL)
+      if (existing) {
+        await existing.setFocus()
+        return
+      }
 
       const webview = new WebviewWindow(ADD_INSTANCE_WINDOW_LABEL, {
         url: `/index.html?${params.toString()}`,
@@ -816,7 +936,7 @@ export default function App() {
         center: true,
         resizable: false,
         maximizable: false,
-        parent: 'main',
+        parent: MAIN_WINDOW_LABEL,
         backgroundColor: '#020a13',
       })
 
@@ -830,6 +950,11 @@ export default function App() {
   }
 
   const openSettingsWindow = () => {
+    if (!isTauriRuntime()) {
+      setWebDialog({ type: 'settings' })
+      return
+    }
+
     const webview = new WebviewWindow('settings', {
       url: '/index.html?window=settings',
       title: '全局设置 (Global Settings)',
@@ -839,6 +964,7 @@ export default function App() {
       minHeight: 560,
       center: true,
       resizable: true,
+      parent: MAIN_WINDOW_LABEL,
     })
 
     webview.once('tauri://error', (event) => {
@@ -846,6 +972,49 @@ export default function App() {
       void WebviewWindow.getByLabel('settings').then((window) => window?.setFocus())
     })
   }
+
+  const openRconWindow = useCallback(async (item: ServerInstance) => {
+    if (!isTauriRuntime()) {
+      setWebDialog({ type: 'rcon', instance: item })
+      return
+    }
+
+    const label = `${RCON_WINDOW_LABEL_PREFIX}-${item.id}`
+    try {
+      const existing = await WebviewWindow.getByLabel(label)
+      if (existing) {
+        await existing.setFocus()
+        return
+      }
+
+      const params = new URLSearchParams({
+        window: 'rcon',
+        instanceId: item.id,
+        name: item.name,
+        rconPort: String(item.rconPort),
+      })
+
+      const webview = new WebviewWindow(label, {
+        url: `/index.html?${params.toString()}`,
+        title: `${item.name} RCON管理`,
+        width: 1080,
+        height: 720,
+        minWidth: 900,
+        minHeight: 620,
+        center: true,
+        resizable: true,
+        parent: MAIN_WINDOW_LABEL,
+        backgroundColor: '#020a13',
+      })
+
+      webview.once('tauri://error', (event) => {
+        console.error('创建 RCON 管理窗口失败', event)
+        void WebviewWindow.getByLabel(label).then((window) => window?.setFocus())
+      })
+    } catch (error) {
+      messageApi.error(`无法打开 RCON 管理窗口：${String(error)}`)
+    }
+  }, [messageApi])
 
   const runForSelected = async (action: (item: ServerInstance) => Promise<void> | void) => {
     const selectedItems = instances.filter((item) => selectedRows.includes(item.id))
@@ -883,6 +1052,10 @@ export default function App() {
 
   const importConfig = async () => {
     try {
+      if (!isTauriRuntime()) {
+        messageApi.info('Web 版无法打开系统文件选择器，请在桌面端导入实例配置')
+        return
+      }
       const selectedPath = await open({
         title: '选择 ASA 实例导出文件',
         multiple: false,
@@ -1008,6 +1181,12 @@ export default function App() {
         return <Tag color={meta.color}>{meta.text}</Tag>
       },
     },
+    {
+      title: '服务端版本号',
+      dataIndex: 'serverVersion',
+      width: 112,
+      render: (_, item) => <span className="mono-text">{formatServerVersion(item.serverVersion, item.versionState)}</span>,
+    },
     { title: '端口 / 查询', width: 96, render: (_, item) => <span className="mono-text">{item.gamePort} / {item.queryPort}</span> },
     {
       title: '玩家数 / 上限',
@@ -1027,6 +1206,7 @@ export default function App() {
                 { key: 'install', label: '安装/更新', icon: <CloudDownloadOutlined /> },
                 { key: 'backup', label: '创建备份', icon: <DatabaseOutlined /> },
                 { key: 'folder', label: '打开目录', icon: <FolderOpenOutlined /> },
+                { key: 'rcon', label: 'RCON管理', icon: <CodeOutlined /> },
                 { key: 'edit', label: '编辑实例', icon: <EditOutlined /> },
                 { key: 'delete', label: '删除实例', icon: <DeleteOutlined />, danger: true, disabled: !canDeleteInstance(item.status) },
               ],
@@ -1034,6 +1214,7 @@ export default function App() {
                 if (key === 'install') void installInstance(item)
                 if (key === 'backup') void createBackup(item.id).then((backup) => messageApi.success(`备份已创建：${backup.path}`)).catch((error) => messageApi.error(`创建备份失败：${String(error)}`))
                 if (key === 'folder') void openInstanceDirectory(item.id).catch((error) => messageApi.error(`打开目录失败：${String(error)}`))
+                if (key === 'rcon') void openRconWindow(item)
                 if (key === 'edit') {
                   setSelectedId(item.id)
                   setSelectedRows([item.id])
@@ -1048,7 +1229,7 @@ export default function App() {
         </Space.Compact>
       ),
     },
-  ], [deleteInstanceRecord, messageApi, selectedId])
+  ], [deleteInstanceRecord, messageApi, openRconWindow, selectedId])
 
   const activeProgressIds = useMemo(
     () => instances
@@ -1056,6 +1237,22 @@ export default function App() {
       .map((item) => item.id),
     [instances, jobProgress],
   )
+  const closeWebDialog = () => setWebDialog(null)
+  const webDialogWidth = webDialog?.type === 'rcon' ? 1080 : webDialog?.type === 'settings' ? 900 : 780
+
+  const handleWebInstanceCreated = (eventPayload: InstanceCreatedEvent) => {
+    replaceInstance(eventPayload.instance)
+    setSelectedId(eventPayload.instance.id)
+    setSelectedRows([eventPayload.instance.id])
+    void loadInstanceDetails(eventPayload.instance.id).catch((error) => {
+      messageApi.error(`加载新增实例配置失败：${String(error)}`)
+    })
+    void refreshLogs()
+    messageApi.success(`${eventPayload.instance.name} 已添加`)
+    if (eventPayload.autoInstall) {
+      void installInstance(eventPayload.instance)
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -1135,6 +1332,7 @@ export default function App() {
               config={config}
               mods={mods}
               dirty={dirty}
+              language={globalSettings.language}
               onConfigChange={updateConfig}
               onModsChange={handleModsChange}
               onSave={() => void saveConfig()}
@@ -1161,6 +1359,31 @@ export default function App() {
           </div>
         </section>
       </main>
+
+      <Modal
+        className="web-child-dialog"
+        footer={null}
+        open={webDialog !== null}
+        onCancel={closeWebDialog}
+        title={null}
+        width={webDialogWidth}
+      >
+        {webDialog?.type === 'settings' ? (
+          <SettingsWindow onClose={closeWebDialog} />
+        ) : webDialog?.type === 'add-instance' ? (
+          <AddInstanceWindow
+            initialParams={webDialog.params}
+            onClose={closeWebDialog}
+            onCreated={handleWebInstanceCreated}
+          />
+        ) : webDialog?.type === 'rcon' ? (
+          <RconWindow
+            instanceId={webDialog.instance.id}
+            name={webDialog.instance.name}
+            rconPort={webDialog.instance.rconPort}
+          />
+        ) : null}
+      </Modal>
 
       <footer className="app-footer">
         <Text type="secondary">v0.1.0 Rust Backend</Text>

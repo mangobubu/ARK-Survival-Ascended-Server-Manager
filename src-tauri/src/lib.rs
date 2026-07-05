@@ -1,4 +1,8 @@
-use tauri::Manager;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use tauri::{Manager, RunEvent, WindowEvent};
 
 mod app_state;
 mod ark_config;
@@ -10,20 +14,47 @@ mod models;
 mod rcon;
 mod steamcmd;
 mod storage;
+mod web_server;
+
+const MAIN_WINDOW_LABEL: &str = "main";
 
 #[tauri::command]
 fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+fn request_full_shutdown<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    is_shutting_down: &AtomicBool,
+) {
+    if is_shutting_down.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    for (label, window) in app_handle.webview_windows() {
+        if label != MAIN_WINDOW_LABEL {
+            let _ = window.close();
+        }
+    }
+
+    app_handle.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let is_shutting_down = Arc::new(AtomicBool::new(false));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let runtime = app_state::AppRuntime::load(app.handle())
                 .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
-            app.manage(runtime);
+            let web_server_port = runtime
+                .settings()
+                .map_err(|error| Box::<dyn std::error::Error>::from(error))?
+                .web_server_port;
+            app.manage(runtime.clone());
+            web_server::start(app.handle().clone(), runtime, web_server_port);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -48,6 +79,7 @@ pub fn run() {
             commands::stop_instance,
             commands::restart_instance,
             commands::refresh_instance_status,
+            commands::execute_rcon_command,
             commands::query_logs,
             commands::clear_logs,
             commands::clear_scoped_logs,
@@ -61,6 +93,18 @@ pub fn run() {
             commands::open_instance_directory,
             commands::open_directory_path,
         ])
-        .run(tauri::generate_context!())
-        .expect("启动 ASA 服务器管理器失败");
+        .build(tauri::generate_context!())
+        .expect("启动 ASA 服务端管理器失败")
+        .run(move |app_handle, event| {
+            if let RunEvent::WindowEvent { label, event, .. } = event {
+                if label == MAIN_WINDOW_LABEL
+                    && matches!(
+                        event,
+                        WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
+                    )
+                {
+                    request_full_shutdown(app_handle, is_shutting_down.as_ref());
+                }
+            }
+        });
 }

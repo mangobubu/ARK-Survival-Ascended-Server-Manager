@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Debug)]
 pub struct AppliedConfig {
     pub config_dir: PathBuf,
     pub game_user_settings_path: PathBuf,
@@ -18,6 +19,8 @@ pub fn apply_instance_config(
     config: &Value,
     mods: &[ModItem],
 ) -> Result<AppliedConfig, String> {
+    validate_visibility_access(config)?;
+
     let config_dir = config_dir(instance);
     fs::create_dir_all(&config_dir)
         .map_err(|error| format!("无法创建 ARK 配置目录 {}：{error}", config_dir.display()))?;
@@ -717,8 +720,57 @@ fn render_game_ini(config: &Value) -> String {
         ),
     ];
 
+    lines.extend(render_item_stack_override_lines(config));
     lines.push(String::new());
     lines.join("\r\n")
+}
+
+fn render_item_stack_override_lines(config: &Value) -> Vec<String> {
+    config
+        .get("itemStackOverrides")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let item_class_string = item
+                .get("itemClassString")
+                .and_then(Value::as_str)
+                .map(clean_item_class_string)
+                .unwrap_or_default();
+            if item_class_string.is_empty() {
+                return None;
+            }
+
+            let max_item_quantity = positive_u32(item.get("maxItemQuantity"), 1);
+            let ignore_multiplier = item
+                .get("ignoreMultiplier")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+
+            Some(format!(
+                "ConfigOverrideItemMaxQuantity=(ItemClassString=\"{}\",Quantity=(MaxItemQuantity={},bIgnoreMultiplier={}))",
+                item_class_string,
+                max_item_quantity,
+                ini_bool(ignore_multiplier)
+            ))
+        })
+        .collect()
+}
+
+fn clean_item_class_string(value: &str) -> String {
+    value.trim().trim_matches('"').replace('"', "")
+}
+
+fn positive_u32(value: Option<&Value>, fallback: u32) -> u32 {
+    value
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_f64().map(|number| number.trunc().max(0.0) as u64))
+        })
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(fallback)
 }
 
 fn render_engine_ini(config: &Value) -> String {
@@ -804,6 +856,34 @@ fn url_component(value: &str) -> String {
         .replace('"', "%22")
 }
 
+pub fn normalized_visibility(config: &Value) -> &'static str {
+    match config
+        .get("visibility")
+        .and_then(Value::as_str)
+        .map(str::trim)
+    {
+        Some("private") => "private",
+        Some("public") => "public",
+        _ if text(config, "serverPassword", "").trim().is_empty() => "public",
+        _ => "private",
+    }
+}
+
+pub fn validate_visibility_access(config: &Value) -> Result<(), String> {
+    let password_configured = !text(config, "serverPassword", "").trim().is_empty();
+    let exclusive_access =
+        bool_value(config, "whitelist", false) || bool_value(config, "exclusiveJoin", false);
+
+    if normalized_visibility(config) == "private" && !password_configured && !exclusive_access {
+        return Err(
+            "服务器可见性选择“私有”时，必须设置加入服务器密码或启用 Exclusive Join 白名单；ARK: Survival Ascended 官方 Server configuration 没有独立的免密码隐藏服务器准入参数。"
+                .to_string(),
+        );
+    }
+
+    Ok(())
+}
+
 fn split_custom_args(value: &str) -> Vec<String> {
     value
         .split_whitespace()
@@ -838,6 +918,7 @@ mod tests {
             pid: None,
             last_started_at: None,
             last_stopped_at: None,
+            server_version: String::new(),
             version_state: "未安装".to_string(),
             last_error: None,
         }
@@ -855,6 +936,51 @@ mod tests {
 
         assert!(args[0].contains("?ServerPVE=True?ServerAdminPassword=admin.pass"));
         assert!(args[0].ends_with("?ServerAdminPassword=admin.pass"));
+    }
+
+    #[test]
+    fn private_visibility_requires_password_or_exclusive_join() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let instance = test_instance(temp.path());
+        let config = json!({
+            "adminPassword": "admin",
+            "visibility": "private",
+            "serverPassword": "",
+            "exclusiveJoin": false,
+            "whitelist": false
+        });
+
+        let error =
+            apply_instance_config(&instance, &config, &[]).expect_err("私有模式缺少准入条件应失败");
+
+        assert!(error.contains("私有"));
+        assert!(!config_dir(&instance).exists());
+    }
+
+    #[test]
+    fn private_visibility_allows_exclusive_join_without_password() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let instance = test_instance(temp.path());
+        let config = json!({
+            "adminPassword": "admin",
+            "visibility": "private",
+            "serverPassword": "",
+            "exclusiveJoin": true
+        });
+
+        let applied = apply_instance_config(&instance, &config, &[])
+            .expect("Exclusive Join 可作为私有准入条件");
+        let game_user_settings =
+            fs::read_to_string(applied.game_user_settings_path).expect("read GameUserSettings.ini");
+
+        assert!(game_user_settings.contains("ServerPassword="));
+        assert!(
+            applied
+                .launch_arguments
+                .iter()
+                .any(|arg| arg == "-exclusivejoin")
+        );
+        assert!(!applied.launch_arguments[0].contains("?ServerPassword="));
     }
 
     #[test]
@@ -952,6 +1078,11 @@ mod tests {
             "fishingLootQualityMultiplier": 1.75,
             "fuelConsumptionIntervalMultiplier": 6.5,
             "itemStackSizeMultiplier": 7.5,
+            "itemStackOverrides": [
+                {"itemClassString": "PrimalItemResource_Stone_C", "maxItemQuantity": 1000, "ignoreMultiplier": true},
+                {"itemClassString": "PrimalItemResource_Wood_C", "maxItemQuantity": 500, "ignoreMultiplier": false},
+                {"itemClassString": "   ", "maxItemQuantity": 50, "ignoreMultiplier": true}
+            ],
             "globalSpoilingTimeMultiplier": 8.5,
             "globalItemDecompositionTimeMultiplier": 9.5,
             "globalCorpseDecompositionTimeMultiplier": 10.5,
@@ -1054,6 +1185,8 @@ mod tests {
             "MaxAlliancesPerTribe=2",
             "MaxTribesPerAlliance=6",
             "bPvEDisableFriendlyFire=True",
+            "ConfigOverrideItemMaxQuantity=(ItemClassString=\"PrimalItemResource_Stone_C\",Quantity=(MaxItemQuantity=1000,bIgnoreMultiplier=True))",
+            "ConfigOverrideItemMaxQuantity=(ItemClassString=\"PrimalItemResource_Wood_C\",Quantity=(MaxItemQuantity=500,bIgnoreMultiplier=False))",
         ] {
             assert!(game_ini.contains(expected), "Game.ini 缺少 {expected}");
         }

@@ -1,4 +1,5 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
+import { getWebApiBaseUrl, isTauriRuntime } from './runtime'
 import type {
   AddInstancePayload,
   BackupItem,
@@ -8,83 +9,121 @@ import type {
   ImportedServerConfigPreview,
   InstancePortKind,
   JobProgress,
+  LogClearScope,
   LogLine,
   ModItem,
   PortCheckResult,
   ServerConfig,
   ServerInstance,
+  SteamCmdCheck,
+  SteamCmdInstallResult,
+  SteamCmdProgress,
 } from './types'
 
-export const getSettings = () => invoke<GlobalSettings>('get_settings')
+async function invokeCommand<T>(command: string, args: Record<string, unknown> = {}) {
+  if (isTauriRuntime()) return invoke<T>(command, args)
+  return webInvoke<T>(command, args)
+}
 
-export const saveSettings = (settings: GlobalSettings) => invoke<GlobalSettings>('save_settings', { settings })
+async function webInvoke<T>(command: string, args: Record<string, unknown>) {
+  const response = await fetch(`${getWebApiBaseUrl()}/api/invoke`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command, args }),
+  })
 
-export const listInstances = () => invoke<ServerInstance[]>('list_instances')
+  const payload = await response.json().catch(() => null) as { ok?: boolean; data?: T; error?: string } | null
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error ?? `Web API 调用失败：${command}`)
+  }
+  return payload.data as T
+}
+
+export const getSettings = () => invokeCommand<GlobalSettings>('get_settings')
+
+export const saveSettings = (settings: GlobalSettings) => invokeCommand<GlobalSettings>('save_settings', { settings })
+
+export const checkSteamCmd = (path: string) => invokeCommand<SteamCmdCheck>('check_steamcmd', { path })
+
+export const installSteamCmd = (parentPath: string, onProgress: (progress: SteamCmdProgress) => void) => {
+  if (isTauriRuntime()) {
+    const progress = new Channel<SteamCmdProgress>()
+    progress.onmessage = onProgress
+    return invoke<SteamCmdInstallResult>('install_steamcmd', { parentPath, progress })
+  }
+  return invokeCommand<SteamCmdInstallResult>('install_steamcmd', { parentPath })
+}
+
+export const listInstances = () => invokeCommand<ServerInstance[]>('list_instances')
 
 export const checkInstancePort = (port: number, portKind: InstancePortKind) =>
-  invoke<PortCheckResult>('check_instance_port', { port, portKind })
+  invokeCommand<PortCheckResult>('check_instance_port', { port, portKind })
 
-export const createInstance = (payload: AddInstancePayload) => invoke<ServerInstance>('create_instance', { payload })
+export const createInstance = (payload: AddInstancePayload) => invokeCommand<ServerInstance>('create_instance', { payload })
 
 export const readServerDirectoryConfig = (path: string) =>
-  invoke<ImportedServerConfigPreview>('read_server_directory_config', { path })
+  invokeCommand<ImportedServerConfigPreview>('read_server_directory_config', { path })
 
-export const getInstanceConfig = (instanceId: string) => invoke<Partial<ServerConfig>>('get_instance_config', { instanceId })
+export const getInstanceConfig = (instanceId: string) => invokeCommand<Partial<ServerConfig>>('get_instance_config', { instanceId })
 
-export const getInstanceMods = (instanceId: string) => invoke<ModItem[]>('get_instance_mods', { instanceId })
+export const getInstanceMods = (instanceId: string) => invokeCommand<ModItem[]>('get_instance_mods', { instanceId })
 
 export const saveInstanceConfig = (instanceId: string, config: ServerConfig, mods: ModItem[]) =>
-  invoke<ServerInstance>('save_instance_config', { instanceId, config, mods })
+  invokeCommand<ServerInstance>('save_instance_config', { instanceId, config, mods })
 
 export const applyInstanceConfig = (instanceId: string, config: ServerConfig, mods: ModItem[]) =>
-  invoke<ServerInstance>('apply_instance_config', { instanceId, config, mods })
+  invokeCommand<ServerInstance>('apply_instance_config', { instanceId, config, mods })
 
 export const updateInstanceMods = (instanceId: string, mods: ModItem[]) =>
-  invoke<ModItem[]>('update_instance_mods', { instanceId, mods })
+  invokeCommand<ModItem[]>('update_instance_mods', { instanceId, mods })
 
-export const checkModUpdates = (mods: ModItem[]) => invoke<ModItem[]>('check_mod_updates', { mods })
+export const checkModUpdates = (mods: ModItem[]) => invokeCommand<ModItem[]>('check_mod_updates', { mods })
 
 export const installOrUpdateInstance = (instanceId: string, onProgress: (progress: JobProgress) => void) => {
+  if (!isTauriRuntime()) return invokeCommand<ServerInstance>('install_or_update_instance', { instanceId })
   const progress = new Channel<JobProgress>()
   progress.onmessage = onProgress
   return invoke<ServerInstance>('install_or_update_instance', { instanceId, progress })
 }
 
-export const startInstance = (instanceId: string) => invoke<ServerInstance>('start_instance', { instanceId })
+export const startInstance = (instanceId: string) => invokeCommand<ServerInstance>('start_instance', { instanceId })
 
-export const stopInstance = (instanceId: string) => invoke<ServerInstance>('stop_instance', { instanceId })
+export const stopInstance = (instanceId: string) => invokeCommand<ServerInstance>('stop_instance', { instanceId })
 
-export const restartInstance = (instanceId: string) => invoke<ServerInstance>('restart_instance', { instanceId })
+export const restartInstance = (instanceId: string) => invokeCommand<ServerInstance>('restart_instance', { instanceId })
 
-export const refreshInstanceStatus = (instanceId: string) => invoke<ServerInstance>('refresh_instance_status', { instanceId })
+export const refreshInstanceStatus = (instanceId: string) => invokeCommand<ServerInstance>('refresh_instance_status', { instanceId })
 
-export const queryLogs = (limit = 500) => invoke<LogLine[]>('query_logs', { limit })
+export const executeRconCommand = (instanceId: string, command: string) =>
+  invokeCommand<string>('execute_rcon_command', { instanceId, command })
 
-export const clearLogs = () => invoke<void>('clear_logs')
+export const queryLogs = (limit = 500) => invokeCommand<LogLine[]>('query_logs', { limit })
 
-export const clearScopedLogs = (scope: {
-  source: LogLine['source']
-  instance?: string
-  serverLogKind?: NonNullable<LogLine['serverLogKind']>
-}) =>
-  invoke<void>('clear_scoped_logs', scope)
+export const clearLogs = () => invokeCommand<void>('clear_logs')
 
-export const createBackup = (instanceId: string) => invoke<BackupItem>('create_backup', { instanceId })
+export const clearScopedLogs = (scope: LogClearScope) =>
+  invokeCommand<void>('clear_scoped_logs', {
+    source: scope.source,
+    instance: scope.instance ?? undefined,
+    serverLogKind: scope.serverLogKind ?? undefined,
+  })
 
-export const listBackups = (instanceId: string) => invoke<BackupItem[]>('list_backups', { instanceId })
+export const createBackup = (instanceId: string) => invokeCommand<BackupItem>('create_backup', { instanceId })
+
+export const listBackups = (instanceId: string) => invokeCommand<BackupItem[]>('list_backups', { instanceId })
 
 export const restoreBackup = (instanceId: string, backupPath: string) =>
-  invoke<void>('restore_backup', { instanceId, backupPath })
+  invokeCommand<void>('restore_backup', { instanceId, backupPath })
 
 export const exportInstanceConfig = (instanceIds: string[]) =>
-  invoke<ExportResult>('export_instance_config', { instanceIds })
+  invokeCommand<ExportResult>('export_instance_config', { instanceIds })
 
-export const exportCluster = () => invoke<ExportResult>('export_cluster')
+export const exportCluster = () => invokeCommand<ExportResult>('export_cluster')
 
-export const importInstanceConfig = (path: string) => invoke<ImportResult>('import_instance_config', { path })
+export const importInstanceConfig = (path: string) => invokeCommand<ImportResult>('import_instance_config', { path })
 
-export const deleteInstance = (instanceId: string) => invoke<ServerInstance>('delete_instance', { instanceId })
+export const deleteInstance = (instanceId: string) => invokeCommand<ServerInstance>('delete_instance', { instanceId })
 
-export const openInstanceDirectory = (instanceId: string) => invoke<void>('open_instance_directory', { instanceId })
+export const openInstanceDirectory = (instanceId: string) => invokeCommand<void>('open_instance_directory', { instanceId })
 
-export const openDirectoryPath = (path: string) => invoke<void>('open_directory_path', { path })
+export const openDirectoryPath = (path: string) => invokeCommand<void>('open_directory_path', { path })

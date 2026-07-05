@@ -5,14 +5,13 @@ import {
   FolderOpenOutlined,
   WarningOutlined,
 } from '@ant-design/icons'
-import { Channel, invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Alert, Button, Modal, Progress, Space, Spin, Typography, message } from 'antd'
+import { checkSteamCmd, installSteamCmd } from './backendApi'
 import { saveGlobalSettings } from './globalSettings'
+import { isTauriRuntime } from './runtime'
 import type {
   GlobalSettings,
-  SteamCmdCheck,
-  SteamCmdInstallResult,
   SteamCmdProgress,
 } from './types'
 
@@ -80,7 +79,7 @@ export default function SteamCmdSetup({ settings, onSettingsChange }: SteamCmdSe
   const checkConfiguredPath = useCallback(async (showGuide: boolean) => {
     setAvailability('checking')
     try {
-      const result = await invoke<SteamCmdCheck>('check_steamcmd', { path: settings.steamCmdPath })
+      const result = await checkSteamCmd(settings.steamCmdPath)
       if (result.valid) {
         setAvailability('ready')
         setGuideOpen(false)
@@ -107,6 +106,10 @@ export default function SteamCmdSetup({ settings, onSettingsChange }: SteamCmdSe
   const selectExistingDirectory = async () => {
     setCheckingDirectory(true)
     try {
+      if (!isTauriRuntime()) {
+        messageApi.info('Web 版无法打开本机目录选择器，请在全局设置中手动填写 SteamCMD 目录')
+        return
+      }
       const selected = await open({
         defaultPath: settings.steamCmdPath || undefined,
         directory: true,
@@ -115,7 +118,7 @@ export default function SteamCmdSetup({ settings, onSettingsChange }: SteamCmdSe
       })
       if (!selected) return
 
-      const result = await invoke<SteamCmdCheck>('check_steamcmd', { path: selected })
+      const result = await checkSteamCmd(selected)
       if (!result.valid) {
         messageApi.error(result.reason ?? '所选目录不是有效的 SteamCMD 目录')
         return
@@ -135,16 +138,10 @@ export default function SteamCmdSetup({ settings, onSettingsChange }: SteamCmdSe
     setInstallError(null)
     setProgress(emptyProgress)
 
-    const progressChannel = new Channel<SteamCmdProgress>()
-    progressChannel.onmessage = (event) => setProgress(event)
-
     try {
-      const result = await invoke<SteamCmdInstallResult>('install_steamcmd', {
-        parentPath,
-        progress: progressChannel,
-      })
+      const result = await installSteamCmd(parentPath, setProgress)
       applySteamCmdPath(result.path)
-      messageApi.success('SteamCMD 已静默安装并完成初始化')
+      messageApi.success('SteamCMD 已静默安装并完成初始化，服务器与备份目录已准备就绪')
     } catch (error) {
       setInstallError(String(error))
       setAvailability('missing')
@@ -155,10 +152,14 @@ export default function SteamCmdSetup({ settings, onSettingsChange }: SteamCmdSe
 
   const selectDownloadParent = async () => {
     try {
+      if (!isTauriRuntime()) {
+        setInstallError('Web 版无法打开本机目录选择器；请在运行主机上安装 SteamCMD 后，到全局设置中填写目录。')
+        return
+      }
       const selected = await open({
         directory: true,
         multiple: false,
-        title: '选择 SteamCMD 的上级目录（程序将创建 SteamCMD 子目录）',
+        title: '选择 SteamCMD 的上级目录（程序将创建 SteamCMD 子目录，并准备服务器与备份目录）',
       })
       if (selected) await runInstall(selected)
     } catch (error) {
@@ -241,7 +242,7 @@ export default function SteamCmdSetup({ settings, onSettingsChange }: SteamCmdSe
             {installError ? (
               <Alert type="error" showIcon title="SteamCMD 安装失败" description={installError} />
             ) : (
-              <Alert type="info" showIcon title="请选择已有 SteamCMD 目录，或选择一个上级目录，由管理器自动创建 SteamCMD 子目录并静默安装。" />
+              <Alert type="info" showIcon title="请选择已有 SteamCMD 目录，或选择一个上级目录，由管理器自动创建 SteamCMD 子目录，并在安装时准备服务器与备份目录。" />
             )}
           </div>
         )}

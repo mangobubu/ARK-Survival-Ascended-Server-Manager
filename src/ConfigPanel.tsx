@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState } from 'react'
+import { Children, cloneElement, createContext, isValidElement, useContext, useMemo, useState } from 'react'
 import {
   ApartmentOutlined,
   ArrowDownOutlined,
@@ -15,6 +15,7 @@ import {
   ReloadOutlined,
   RightOutlined,
   SafetyCertificateOutlined,
+  SearchOutlined,
   SettingOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons'
@@ -38,15 +39,56 @@ import {
   Typography,
 } from 'antd'
 import { activeEventOptions } from './data'
-import type { ModItem, ServerConfig, ServerInstance } from './types'
+import { arkStackableItemOptions } from './arkStackableItemOptions'
+import { arkStackableItemZhCategories, arkStackableItemZhLabels } from './arkStackableItemLocalizations'
+import type { GlobalSettings, ItemStackOption, ItemStackOverride, ModItem, ServerConfig, ServerInstance } from './types'
 
 const { Text, Paragraph } = Typography
+
+type AppLanguage = GlobalSettings['language']
+
+type ItemStackLanguageText = {
+  defaultStackInOption: (defaultStackSize: number) => string
+  defaultStackMeta: (defaultStackSize: number, category: string) => string
+  previewPlaceholder: string
+  unselectedItem: string
+}
+
+const itemStackLanguageText: Record<AppLanguage, ItemStackLanguageText> = {
+  'zh-CN': {
+    defaultStackInOption: (defaultStackSize) => `默认 ${defaultStackSize}`,
+    defaultStackMeta: (defaultStackSize, category) => `默认堆叠 ${defaultStackSize} · ${category}`,
+    previewPlaceholder: '请选择物品后生成 ConfigOverrideItemMaxQuantity 预览',
+    unselectedItem: '未选择物品',
+  },
+  'en-US': {
+    defaultStackInOption: (defaultStackSize) => `Default ${defaultStackSize}`,
+    defaultStackMeta: (defaultStackSize, category) => `Default stack ${defaultStackSize} · ${category}`,
+    previewPlaceholder: 'Select an item to generate ConfigOverrideItemMaxQuantity preview',
+    unselectedItem: 'No item selected',
+  },
+}
+
+function getItemStackItemLabel(item: ItemStackOption, language: AppLanguage) {
+  return language === 'zh-CN' ? item.zhLabel ?? arkStackableItemZhLabels[item.classString] ?? item.label : item.label
+}
+
+function getItemStackItemCategory(item: ItemStackOption, language: AppLanguage) {
+  return language === 'zh-CN' ? item.zhCategory ?? arkStackableItemZhCategories[item.category] ?? item.category : item.category
+}
+
+function formatStackableItemOptionLabel(item: ItemStackOption, language: AppLanguage) {
+  const displayLabel = getItemStackItemLabel(item, language)
+  const defaultStackText = itemStackLanguageText[language].defaultStackInOption(item.defaultStackSize)
+  return language === 'zh-CN' ? `${displayLabel}（${defaultStackText}）` : `${displayLabel} (${defaultStackText})`
+}
 
 interface ConfigPanelProps {
   instance: ServerInstance
   config: ServerConfig
   mods: ModItem[]
   dirty: boolean
+  language: AppLanguage
   onConfigChange: <K extends keyof ServerConfig>(key: K, value: ServerConfig[K]) => void
   onModsChange: (mods: ModItem[]) => void
   onSave: () => void
@@ -58,13 +100,14 @@ interface ConfigPanelProps {
 const AccordionContext = createContext<{
   activeSection: string | null
   setActiveSection: (section: string | null) => void
+  forceExpand: boolean
 } | null>(null)
 
-function AccordionGroup({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+function AccordionGroup({ children, className = '', forceExpand = false }: { children: React.ReactNode; className?: string; forceExpand?: boolean }) {
   const [activeSection, setActiveSection] = useState<string | null>(null)
 
   return (
-    <AccordionContext.Provider value={{ activeSection, setActiveSection }}>
+    <AccordionContext.Provider value={{ activeSection, setActiveSection, forceExpand }}>
       <div className={`settings-accordion ${className}`}>{children}</div>
     </AccordionContext.Provider>
   )
@@ -72,7 +115,7 @@ function AccordionGroup({ children, className = '' }: { children: React.ReactNod
 
 function SectionCard({ title, icon, note, children, className = '' }: { title: string; icon?: React.ReactNode; note?: string; children: React.ReactNode; className?: string }) {
   const accordion = useContext(AccordionContext)
-  const expanded = !accordion || accordion.activeSection === title
+  const expanded = accordion?.forceExpand || !accordion || accordion.activeSection === title
 
   return (
     <section className={`setting-card ${expanded ? 'setting-card--expanded' : ''} ${className}`}>
@@ -80,7 +123,10 @@ function SectionCard({ title, icon, note, children, className = '' }: { title: s
         type="button"
         className="setting-card__header"
         aria-expanded={expanded}
-        onClick={() => accordion?.setActiveSection(expanded ? null : title)}
+        onClick={() => {
+          if (!accordion || accordion.forceExpand) return
+          accordion.setActiveSection(expanded ? null : title)
+        }}
       >
         <span className="setting-card__icon">{icon}</span>
         <span>{title}</span>
@@ -116,13 +162,207 @@ function NumberField({ value, onChange, min = 0, max, step = 1, addonAfter }: { 
   return <InputNumber value={value} min={min} max={max} step={step} onChange={(next) => onChange(next ?? min)} />
 }
 
-export default function ConfigPanel({ instance, config, mods, dirty, onConfigChange, onModsChange, onSave, onApply, onCheckModUpdates, checkingMods = false }: ConfigPanelProps) {
+type SearchableElementProps = {
+  children?: React.ReactNode
+  label?: React.ReactNode
+  note?: React.ReactNode
+  options?: unknown
+  placeholder?: React.ReactNode
+  tip?: React.ReactNode
+  title?: React.ReactNode
+}
+
+const searchablePropNames = ['label', 'note', 'options', 'placeholder', 'tip', 'title'] as const
+
+function normalizeSearchText(value: unknown) {
+  return String(value ?? '').trim().toLocaleLowerCase()
+}
+
+function textFromSearchValue(value: unknown): string {
+  if (value == null || typeof value === 'boolean') return ''
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  if (Array.isArray(value)) return value.map(textFromSearchValue).join(' ')
+  if (isValidElement(value)) return collectSearchText(value)
+  if (typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).map(textFromSearchValue).join(' ')
+  }
+  return ''
+}
+
+function getSearchableProps(node: React.ReactNode) {
+  return isValidElement(node) ? node.props as SearchableElementProps : null
+}
+
+function collectOwnSearchText(node: React.ReactNode) {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  const props = getSearchableProps(node)
+  if (!props) return ''
+  return searchablePropNames.map((name) => textFromSearchValue(props[name])).join(' ')
+}
+
+function collectSearchText(node: React.ReactNode): string {
+  if (node == null || typeof node === 'boolean') return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(collectSearchText).join(' ')
+
+  const props = getSearchableProps(node)
+  if (!props) return ''
+
+  const childText = Children.toArray(props.children).map(collectSearchText).join(' ')
+  return `${collectOwnSearchText(node)} ${childText}`
+}
+
+function hasRenderableNode(node: React.ReactNode): boolean {
+  if (node == null || typeof node === 'boolean') return false
+  if (Array.isArray(node)) return node.some(hasRenderableNode)
+  return true
+}
+
+function filterSearchNode(node: React.ReactNode, query: string): React.ReactNode {
+  if (!query) return node
+  if (node == null || typeof node === 'boolean') return null
+  if (typeof node === 'string' || typeof node === 'number') {
+    return normalizeSearchText(node).includes(query) ? node : null
+  }
+  if (Array.isArray(node)) {
+    const filtered = node.map((child) => filterSearchNode(child, query)).filter(hasRenderableNode)
+    return filtered.length > 0 ? filtered : null
+  }
+  if (!isValidElement(node)) return null
+
+  const props = node.props as SearchableElementProps
+  const ownMatches = normalizeSearchText(collectOwnSearchText(node)).includes(query)
+  const wholeMatches = normalizeSearchText(collectSearchText(node)).includes(query)
+
+  if (!wholeMatches) return null
+  if (node.type === Field) return node
+  if (node.type === SectionCard && ownMatches) return node
+
+  const filteredChildren = filterSearchNode(props.children, query)
+  if (hasRenderableNode(filteredChildren)) {
+    return cloneElement(node as React.ReactElement<SearchableElementProps>, undefined, filteredChildren)
+  }
+
+  return ownMatches ? node : null
+}
+
+export default function ConfigPanel({ instance, config, mods, dirty, language, onConfigChange, onModsChange, onSave, onApply, onCheckModUpdates, checkingMods = false }: ConfigPanelProps) {
   const [modModalOpen, setModModalOpen] = useState(false)
+  const [itemStackModalOpen, setItemStackModalOpen] = useState(false)
+  const [itemStackSearch, setItemStackSearch] = useState('')
   const [modId, setModId] = useState('')
   const [activeTab, setActiveTab] = useState('basic')
+  const [configSearch, setConfigSearch] = useState('')
   const set = onConfigChange
   const isAberration = instance.mapCode === 'Aberration_WP'
   const isLostColony = instance.mapCode === 'LostColony_WP'
+  const normalizedConfigSearch = normalizeSearchText(configSearch)
+  const configSearchActive = normalizedConfigSearch.length > 0
+  const hasJoinPassword = config.serverPassword.trim().length > 0
+  const hasExclusiveAccess = config.whitelist || config.exclusiveJoin
+  const privateVisibilityNeedsAccess = config.visibility === 'private' && !hasJoinPassword && !hasExclusiveAccess
+  const itemStackOverrides = config.itemStackOverrides ?? []
+  const itemStackText = itemStackLanguageText[language]
+  const stackableItemSelectOptions = useMemo(() => arkStackableItemOptions.map((item) => ({
+    baseLabel: formatStackableItemOptionLabel(item, language),
+    value: item.classString,
+    searchText: [
+      getItemStackItemLabel(item, language),
+      item.label,
+      item.classString,
+      getItemStackItemCategory(item, language),
+      item.category,
+    ].join(' '),
+  })), [language])
+  const usedItemStackClassStrings = useMemo(() => new Set(
+    itemStackOverrides.map((override) => override.itemClassString.trim()).filter(Boolean)
+  ), [itemStackOverrides])
+
+  const getStackableItemSelectOptions = (currentClassString: string) => stackableItemSelectOptions.map((option) => {
+    const existsInOtherOverride = option.value !== currentClassString && usedItemStackClassStrings.has(option.value)
+    return {
+      ...option,
+      label: existsInOtherOverride ? (
+        <span className="item-stack-select-option item-stack-select-option--exists">
+          <span>{option.baseLabel}</span>
+          <Tag color="warning">已存在</Tag>
+        </span>
+      ) : option.baseLabel,
+      disabled: existsInOtherOverride,
+    }
+  })
+
+  const openItemStackModal = () => {
+    setItemStackSearch('')
+    setItemStackModalOpen(true)
+  }
+
+  const updateItemStackOverrides = (next: ItemStackOverride[]) => {
+    set('itemStackOverrides', next)
+  }
+
+  const updateItemStackOverride = (index: number, patch: Partial<ItemStackOverride>) => {
+    updateItemStackOverrides(itemStackOverrides.map((item, itemIndex) => (
+      itemIndex === index ? { ...item, ...patch } : item
+    )))
+  }
+
+  const addItemStackOverride = () => {
+    updateItemStackOverrides([
+      ...itemStackOverrides,
+      { itemClassString: '', maxItemQuantity: 100, ignoreMultiplier: true },
+    ])
+  }
+
+  const removeItemStackOverride = (index: number) => {
+    updateItemStackOverrides(itemStackOverrides.filter((_, itemIndex) => itemIndex !== index))
+  }
+
+  const selectItemStackOverrideItem = (index: number, classString: string) => {
+    if (itemStackOverrides.some((item, itemIndex) => itemIndex !== index && item.itemClassString === classString)) return
+
+    const selectedItem = arkStackableItemOptions.find((item) => item.classString === classString)
+    updateItemStackOverride(index, {
+      itemClassString: classString,
+      maxItemQuantity: selectedItem?.defaultStackSize ?? itemStackOverrides[index]?.maxItemQuantity ?? 100,
+    })
+  }
+
+  const itemStackOverridePreview = (override: ItemStackOverride) => {
+    const itemClassString = override.itemClassString.trim()
+    if (!itemClassString) return itemStackText.previewPlaceholder
+
+    const maxItemQuantity = Math.max(1, Math.trunc(override.maxItemQuantity || 1))
+    const ignoreMultiplier = override.ignoreMultiplier ? 'True' : 'False'
+    return 'ConfigOverrideItemMaxQuantity=(ItemClassString="' + itemClassString + '",Quantity=(MaxItemQuantity=' + maxItemQuantity + ',bIgnoreMultiplier=' + ignoreMultiplier + '))'
+  }
+
+  const normalizedItemStackSearch = normalizeSearchText(itemStackSearch)
+  const itemStackOverrideRows = itemStackOverrides.map((override, index) => {
+    const selectedItem = arkStackableItemOptions.find((item) => item.classString === override.itemClassString)
+    const selectedItemLabel = selectedItem ? getItemStackItemLabel(selectedItem, language) : itemStackText.unselectedItem
+    const selectedItemCategory = selectedItem ? getItemStackItemCategory(selectedItem, language) : ''
+    const preview = itemStackOverridePreview(override)
+    const searchText = normalizeSearchText([
+      selectedItemLabel,
+      selectedItem?.label,
+      selectedItemCategory,
+      selectedItem?.category,
+      override.itemClassString,
+      override.maxItemQuantity,
+      preview,
+    ].join(' '))
+
+    return {
+      index,
+      override,
+      selectedItem,
+      selectedItemLabel,
+      selectedItemCategory,
+      preview,
+      hidden: normalizedItemStackSearch.length > 0 && !searchText.includes(normalizedItemStackSearch),
+    }
+  }).filter((row) => !row.hidden)
 
   const addMod = () => {
     const id = modId.trim()
@@ -140,8 +380,9 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
     onModsChange(next)
   }
 
+
   const basicTab = (
-    <AccordionGroup>
+    <AccordionGroup forceExpand={configSearchActive}>
       <SectionCard title="网络与远程管理" icon={<ApartmentOutlined />}>
         <Field label="服务器名称" tip="[SessionSettings] SessionName" wide><Input value={config.sessionName} onChange={(e) => set('sessionName', e.target.value)} /></Field>
         <div className="field-pair">
@@ -153,7 +394,26 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
         <Field label="加入服务器密码"><Input.Password value={config.serverPassword} onChange={(e) => set('serverPassword', e.target.value)} placeholder="留空表示无密码" /></Field>
         <Field label="管理员密码" tip="必填，用于 RCON 状态探测与安全停服"><Input.Password value={config.adminPassword} status={config.adminPassword.trim() ? undefined : 'error'} onChange={(e) => set('adminPassword', e.target.value)} placeholder="必填" /></Field>
         <Field label="观察者密码"><Input.Password value={config.spectatorPassword} onChange={(e) => set('spectatorPassword', e.target.value)} placeholder="留空表示不启用" /></Field>
-        <Field label="服务器可见性"><Radio.Group value={config.visibility} onChange={(e) => set('visibility', e.target.value)} optionType="button" buttonStyle="solid" options={[{ label: '公开', value: 'public' }, { label: '私有', value: 'private' }]} /></Field>
+        <Field
+          label="服务器可见性"
+          tip="ASA 官方 Server configuration 没有独立的免密码隐藏服务器参数；私有模式必须配合加入密码或 Exclusive Join 白名单才有真实准入效果。"
+        >
+          <Radio.Group
+            value={config.visibility}
+            onChange={(e) => set('visibility', e.target.value)}
+            optionType="button"
+            buttonStyle="solid"
+            options={[{ label: '公开', value: 'public' }, { label: '私有', value: 'private' }]}
+          />
+        </Field>
+        {privateVisibilityNeedsAccess && (
+          <Alert
+            type="error"
+            showIcon
+            title="私有可见性需要加入密码或 Exclusive Join"
+            description="仅选择“私有”不会产生一个免密码且不可直连的 ASA 服务端；不设置加入密码、不启用白名单时，拿到服务器地址的玩家仍可能加入。"
+          />
+        )}
         <Field label="集群名称 Cluster ID" wide><Input value={config.clusterId} onChange={(e) => set('clusterId', e.target.value)} /></Field>
         <Field label="允许跨服传送"><Switch checked={config.crossTransfer} onChange={(v) => set('crossTransfer', v)} /></Field>
       </SectionCard>
@@ -202,10 +462,37 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
         <Field label="补给箱品质"><NumberField value={config.supplyCrateLootQualityMultiplier} min={0.1} max={5} step={0.1} onChange={(v) => set('supplyCrateLootQualityMultiplier', v)} addonAfter="x" /></Field>
         <Field label="钓鱼战利品品质"><NumberField value={config.fishingLootQualityMultiplier} min={0.1} max={5} step={0.1} onChange={(v) => set('fishingLootQualityMultiplier', v)} addonAfter="x" /></Field>
         <Field label="燃料消耗间隔" tip="越高燃料使用越慢"><NumberField value={config.fuelConsumptionIntervalMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('fuelConsumptionIntervalMultiplier', v)} addonAfter="x" /></Field>
-        <Field label="物品堆叠倍率"><NumberField value={config.itemStackSizeMultiplier} min={0.1} max={1000} step={0.5} onChange={(v) => set('itemStackSizeMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="物品叠加/堆叠倍率" tip="ItemStackSizeMultiplier；全局物品堆叠倍率，1 表示默认叠加数量"><NumberField value={config.itemStackSizeMultiplier} min={0.1} max={1000} step={0.5} onChange={(v) => set('itemStackSizeMultiplier', v)} addonAfter="x" /></Field>
         <Field label="食物腐坏时间"><NumberField value={config.globalSpoilingTimeMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('globalSpoilingTimeMultiplier', v)} addonAfter="x" /></Field>
         <Field label="掉落物分解时间"><NumberField value={config.globalItemDecompositionTimeMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('globalItemDecompositionTimeMultiplier', v)} addonAfter="x" /></Field>
         <Field label="尸体分解时间"><NumberField value={config.globalCorpseDecompositionTimeMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('globalCorpseDecompositionTimeMultiplier', v)} addonAfter="x" /></Field>
+      </SectionCard>
+
+      <SectionCard title="物品单独叠加覆盖" icon={<CodeOutlined />} note="Game.ini">
+        <div className="item-stack-toolbar item-stack-toolbar--summary">
+          <div className="item-stack-toolbar__summary">
+            <Text strong>已配置 {itemStackOverrides.length} 条物品覆盖</Text>
+            <span>在子窗口中集中搜索、添加与编辑 ConfigOverrideItemMaxQuantity。</span>
+          </div>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openItemStackModal}>管理物品覆盖</Button>
+        </div>
+        {itemStackOverrides.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未添加单物品叠加覆盖，点击“管理物品覆盖”在子窗口中添加" />
+        ) : (
+          <div className="item-stack-summary">
+            {itemStackOverrides.slice(0, 5).map((override, index) => {
+              const selectedItem = arkStackableItemOptions.find((item) => item.classString === override.itemClassString)
+              const selectedItemLabel = selectedItem ? getItemStackItemLabel(selectedItem, language) : (override.itemClassString || itemStackText.unselectedItem)
+
+              return (
+                <Tag key={(override.itemClassString || 'empty') + '-' + index} color={override.itemClassString ? 'cyan' : 'default'}>
+                  {selectedItemLabel} · {Math.max(1, Math.trunc(override.maxItemQuantity || 1))}
+                </Tag>
+              )
+            })}
+            {itemStackOverrides.length > 5 && <Tag color="blue">+{itemStackOverrides.length - 5} 条</Tag>}
+          </div>
+        )}
       </SectionCard>
 
       <SectionCard title="自动化与维护" icon={<HistoryOutlined />}>
@@ -223,7 +510,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
   )
 
   const advancedTab = (
-    <AccordionGroup>
+    <AccordionGroup forceExpand={configSearchActive}>
       <SectionCard title="世界节奏与生态" icon={<CloudSyncOutlined />} note="GameUserSettings.ini">
         <div className="field-pair">
           <Field label="昼夜周期速度"><NumberField value={config.dayCycleSpeed} min={0.1} max={10} step={0.1} onChange={(v) => set('dayCycleSpeed', v)} addonAfter="x" /></Field>
@@ -251,7 +538,23 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
         <Field label="留痕宽限期"><NumberField value={config.babyCuddleGracePeriodMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('babyCuddleGracePeriodMultiplier', v)} addonAfter="x" /></Field>
         <Field label="错过留痕损失速度"><NumberField value={config.babyCuddleLoseImprintQualitySpeedMultiplier} min={0} max={100} step={0.1} onChange={(v) => set('babyCuddleLoseImprintQualitySpeedMultiplier', v)} addonAfter="x" /></Field>
         <Field label="留痕属性加成"><NumberField value={config.babyImprintingStatScaleMultiplier} min={0} max={100} step={0.1} onChange={(v) => set('babyImprintingStatScaleMultiplier', v)} addonAfter="x" /></Field>
-        <Field label="单次留痕量"><NumberField value={config.babyImprintAmountMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('babyImprintAmountMultiplier', v)} addonAfter="x" /></Field>
+        <Field
+          label="单次留痕量（一次满留痕）"
+          tip="对应 Game.ini 的 BabyImprintAmountMultiplier；倍率越高，每次留痕增加越多。想一次留痕留满可设为 100，并将留痕互动间隔同步压到 0.01。"
+        >
+          <Space wrap>
+            <NumberField value={config.babyImprintAmountMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('babyImprintAmountMultiplier', v)} addonAfter="x" />
+            <Button
+              size="small"
+              onClick={() => {
+                set('babyImprintAmountMultiplier', 100)
+                set('cuddleInterval', 0.01)
+              }}
+            >
+              设为一次满留痕
+            </Button>
+          </Space>
+        </Field>
         <Field label="任何人可照料幼崽"><Switch checked={config.allowAnyoneBabyImprintCuddle} onChange={(v) => set('allowAnyoneBabyImprintCuddle', v)} /></Field>
       </SectionCard>
 
@@ -376,7 +679,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
   ].filter(Boolean).join(' '), [config])
 
   const performanceTab = (
-    <AccordionGroup>
+    <AccordionGroup forceExpand={configSearchActive}>
       <SectionCard title="进程资源调度" icon={<ThunderboltOutlined />} note="管理器级设置">
         <Field label="进程优先级"><Select value={config.processPriority} onChange={(v) => set('processPriority', v)} options={[{ label: '正常', value: 'normal' }, { label: '高于正常', value: 'aboveNormal' }, { label: '高', value: 'high' }]} /></Field>
         <Field label="CPU 核心亲和性" tip="自动或填写核心编号，例如 0-7"><Input value={config.cpuAffinity} onChange={(e) => set('cpuAffinity', e.target.value)} /></Field>
@@ -435,7 +738,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
   )
 
   const modsTab = (
-    <AccordionGroup className="mod-layout">
+    <AccordionGroup className="mod-layout" forceExpand={configSearchActive}>
       <SectionCard title="MOD 加载列表" icon={<BugOutlined />} note={`已启用 ${mods.filter((m) => m.enabled).length} / ${mods.length}`}>
         <div className="mod-toolbar">
           <div className="mod-toolbar__actions">
@@ -481,7 +784,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
   )
 
   const logsTab = (
-    <AccordionGroup className="log-settings-layout">
+    <AccordionGroup className="log-settings-layout" forceExpand={configSearchActive}>
       <SectionCard title="服务端日志参数" icon={<FileSearchOutlined />} note="启动参数">
         <Field label="启用 Server Game Log"><Switch checked={config.serverGameLog} onChange={(v) => set('serverGameLog', v)} /></Field>
         <Field label="输出部落日志到 RCON"><Switch checked={config.serverGameLogIncludeTribe} onChange={(v) => set('serverGameLogIncludeTribe', v)} /></Field>
@@ -505,6 +808,24 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
     { key: 'mods', label: 'MOD 设置', children: modsTab },
     { key: 'logs', label: '日志参数', children: logsTab },
   ]
+  const filteredTabs = configSearchActive
+    ? tabs.map((tab) => {
+      const tabMatches = normalizeSearchText(tab.label).includes(normalizedConfigSearch)
+      const children = tabMatches ? tab.children : filterSearchNode(tab.children, normalizedConfigSearch)
+      return hasRenderableNode(children) ? { ...tab, children } : null
+    }).filter((tab): tab is typeof tabs[number] => tab !== null)
+    : tabs
+  const tabsWithSearchState = filteredTabs.length > 0 ? filteredTabs : [{
+    key: 'config-search-empty',
+    label: '无结果',
+    disabled: true,
+    children: (
+      <div className="config-panel__search-empty">
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的配置项" />
+      </div>
+    ),
+  }]
+  const activeTabKey = tabsWithSearchState.some((tab) => tab.key === activeTab) ? activeTab : tabsWithSearchState[0].key
 
   return (
     <div className="config-panel">
@@ -517,7 +838,23 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
           </Tag>
         </Space>
       </div>
-      <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabs} />
+      <div className="config-panel__search">
+        <Input
+          allowClear
+          aria-label="搜索配置项"
+          placeholder="搜索配置项、分组或 INI 参数"
+          prefix={<SearchOutlined />}
+          value={configSearch}
+          onChange={(event) => setConfigSearch(event.target.value)}
+        />
+        {configSearchActive && (
+          <div className="config-panel__search-meta">
+            <span>{filteredTabs.length > 0 ? `已筛选 ${filteredTabs.length} 个页签` : '未找到匹配配置'}</span>
+            <span>搜索时自动展开匹配分组</span>
+          </div>
+        )}
+      </div>
+      <Tabs activeKey={activeTabKey} onChange={setActiveTab} items={tabsWithSearchState} />
       <div className="panel-footer-actions">
         <div className="panel-footer-actions__buttons">
           <Button onClick={onSave}>仅保存配置</Button>
@@ -525,6 +862,118 @@ export default function ConfigPanel({ instance, config, mods, dirty, onConfigCha
         </div>
       </div>
 
+      <Modal
+        title="物品单独叠加覆盖"
+        open={itemStackModalOpen}
+        onCancel={() => setItemStackModalOpen(false)}
+        width={1120}
+        centered
+        maskClosable={false}
+        className="item-stack-modal"
+        footer={[
+          <Button key="close" type="primary" onClick={() => setItemStackModalOpen(false)}>完成</Button>,
+        ]}
+      >
+        <div className="item-stack-modal__intro">
+          <Paragraph type="secondary">
+            修改会实时写入当前实例配置；每次打开都会同步展示已有覆盖，保存配置后写入 Game.ini 的 ConfigOverrideItemMaxQuantity。
+          </Paragraph>
+        </div>
+        <div className="item-stack-modal__toolbar">
+          <Input
+            allowClear
+            aria-label="搜索已有物品覆盖"
+            placeholder="搜索已有覆盖：物品名称、分类、ItemClassString 或数量"
+            prefix={<SearchOutlined />}
+            value={itemStackSearch}
+            onChange={(event) => setItemStackSearch(event.target.value)}
+          />
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              setItemStackSearch('')
+              addItemStackOverride()
+            }}
+          >
+            添加物品覆盖
+          </Button>
+        </div>
+        <div className="item-stack-modal__meta">
+          <span>已显示 {itemStackOverrideRows.length} / {itemStackOverrides.length} 条覆盖</span>
+          <span>已有覆盖的物品会在选择列表中禁用，并标识“已存在”。</span>
+        </div>
+        {itemStackOverrides.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未添加物品覆盖">
+            <Button type="primary" icon={<PlusOutlined />} onClick={addItemStackOverride}>立即添加</Button>
+          </Empty>
+        ) : itemStackOverrideRows.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的物品覆盖">
+            <Button onClick={() => setItemStackSearch('')}>清空搜索</Button>
+          </Empty>
+        ) : (
+          <div className="item-stack-editor-table-wrap">
+            <table className="item-stack-editor-table">
+              <thead>
+                <tr>
+                  <th>物品</th>
+                  <th>最大叠加数量</th>
+                  <th>忽略全局倍率</th>
+                  <th>配置预览</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {itemStackOverrideRows.map((row) => (
+                  <tr key={row.index}>
+                    <td className="item-stack-editor-table__item">
+                      <Select
+                        showSearch
+                        className="item-stack-select"
+                        value={row.override.itemClassString || undefined}
+                        placeholder="搜索物品名称、分类或 ItemClassString"
+                        options={getStackableItemSelectOptions(row.override.itemClassString)}
+                        optionFilterProp="searchText"
+                        popupMatchSelectWidth={false}
+                        onChange={(value) => selectItemStackOverrideItem(row.index, value)}
+                      />
+                      {row.selectedItem && (
+                        <div className="item-stack-row-meta">
+                          {itemStackText.defaultStackMeta(row.selectedItem.defaultStackSize, row.selectedItemCategory)}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <InputNumber
+                        className="item-stack-quantity-input"
+                        value={row.override.maxItemQuantity}
+                        min={1}
+                        max={1000000}
+                        step={10}
+                        onChange={(value) => {
+                          const nextValue = Number(value ?? 1)
+                          updateItemStackOverride(row.index, { maxItemQuantity: Math.max(1, Math.trunc(Number.isFinite(nextValue) ? nextValue : 1)) })
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <Switch checked={row.override.ignoreMultiplier} checkedChildren="是" unCheckedChildren="否" onChange={(value) => updateItemStackOverride(row.index, { ignoreMultiplier: value })} />
+                    </td>
+                    <td>
+                      <div className="code-preview code-preview--single item-stack-preview">{row.preview}</div>
+                    </td>
+                    <td>
+                      <Button danger size="small" icon={<DeleteOutlined />} onClick={() => removeItemStackOverride(row.index)}>
+                        删除
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Modal>
       <Modal title="添加 CurseForge MOD" open={modModalOpen} onCancel={() => setModModalOpen(false)} onOk={addMod} okText="添加到列表" cancelText="取消">
         <Paragraph type="secondary">输入 ASA CurseForge 项目 ID。原型会将其加入 ActiveMods 队列，正式接入后可从 CurseForge API 获取名称、版本与文件大小。</Paragraph>
         <Input autoFocus value={modId} onChange={(e) => setModId(e.target.value.replace(/\D/g, ''))} onPressEnter={addMod} placeholder="例如：928708" prefix={<BugOutlined />} />

@@ -172,8 +172,62 @@ impl AppRuntime {
                 .iter_mut()
                 .find(|item| item.id == instance_id)
                 .ok_or_else(|| format!("未找到服务器实例：{instance_id}"))?;
-            instance.status = status;
+            instance.status = status.clone();
             instance.last_error = last_error;
+            if matches!(status, ServerStatus::Stopped | ServerStatus::Error) {
+                instance.players = 0;
+            }
+            instance.clone()
+        };
+        self.persist()?;
+        Ok(updated)
+    }
+
+    pub fn update_instance_players(
+        &self,
+        instance_id: &str,
+        players: u32,
+    ) -> Result<ServerInstance, String> {
+        let (updated, changed) = {
+            let mut data = self.lock()?;
+            let instance = data
+                .instances
+                .iter_mut()
+                .find(|item| item.id == instance_id)
+                .ok_or_else(|| format!("未找到服务器实例：{instance_id}"))?;
+            let changed = instance.players != players;
+            if changed {
+                instance.players = players;
+            }
+            (instance.clone(), changed)
+        };
+        if changed {
+            self.persist()?;
+        }
+        Ok(updated)
+    }
+
+    pub fn update_instance_server_version(
+        &self,
+        instance_id: &str,
+        server_version: String,
+    ) -> Result<ServerInstance, String> {
+        let server_version = server_version.trim().to_string();
+        if server_version.is_empty() {
+            return self.get_instance(instance_id);
+        }
+
+        let updated = {
+            let mut data = self.lock()?;
+            let instance = data
+                .instances
+                .iter_mut()
+                .find(|item| item.id == instance_id)
+                .ok_or_else(|| format!("未找到服务器实例：{instance_id}"))?;
+            if instance.server_version == server_version {
+                return Ok(instance.clone());
+            }
+            instance.server_version = server_version;
             instance.clone()
         };
         self.persist()?;
@@ -254,6 +308,10 @@ impl AppRuntime {
             }
             if status == ServerStatus::Stopped {
                 instance.last_stopped_at = Some(timestamp);
+                instance.players = 0;
+            }
+            if status == ServerStatus::Error {
+                instance.players = 0;
             }
             instance.clone()
         };
@@ -310,6 +368,7 @@ impl AppRuntime {
             pid: None,
             last_started_at: None,
             last_stopped_at: None,
+            server_version: String::new(),
             version_state: "未安装".to_string(),
             last_error: None,
         };
@@ -614,17 +673,21 @@ fn validate_instance_payload(payload: &AddInstancePayload) -> Result<(), String>
 }
 
 pub fn normalize_required_rcon_config(mut config: Value) -> Result<Value, String> {
-    let Some(config_map) = config.as_object_mut() else {
-        return Err("实例配置格式无效".to_string());
-    };
-    let admin_password = config_map
-        .get("adminPassword")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if admin_password.trim().is_empty() {
-        return Err("管理员密码不能为空，RCON 必须启用并设置密码".to_string());
+    {
+        let Some(config_map) = config.as_object_mut() else {
+            return Err("实例配置格式无效".to_string());
+        };
+        let admin_password = config_map
+            .get("adminPassword")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if admin_password.trim().is_empty() {
+            return Err("管理员密码不能为空，RCON 必须启用并设置密码".to_string());
+        }
+        config_map.insert("rconEnabled".to_string(), json!(true));
     }
-    config_map.insert("rconEnabled".to_string(), json!(true));
+
+    ark_config::validate_visibility_access(&config)?;
     Ok(config)
 }
 
@@ -887,6 +950,7 @@ fn default_config_from_payload(payload: &AddInstancePayload, instance: &ServerIn
     map.insert("fishingLootQualityMultiplier".to_string(), json!(1));
     map.insert("fuelConsumptionIntervalMultiplier".to_string(), json!(1));
     map.insert("itemStackSizeMultiplier".to_string(), json!(1));
+    map.insert("itemStackOverrides".to_string(), json!([]));
     map.insert("globalSpoilingTimeMultiplier".to_string(), json!(1));
     map.insert(
         "globalItemDecompositionTimeMultiplier".to_string(),
@@ -1290,6 +1354,20 @@ mod tests {
         .expect_err("应拒绝空管理员密码");
 
         assert!(error.contains("管理员密码不能为空"));
+    }
+
+    #[test]
+    fn 实例配置拒绝无准入条件的私有可见性() {
+        let error = normalize_required_rcon_config(json!({
+            "adminPassword": "ark-admin",
+            "visibility": "private",
+            "serverPassword": "",
+            "exclusiveJoin": false,
+            "whitelist": false
+        }))
+        .expect_err("私有可见性必须具备加入密码或 Exclusive Join");
+
+        assert!(error.contains("私有"));
     }
 
     #[test]

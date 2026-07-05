@@ -14,6 +14,12 @@ pub struct GlobalSettings {
     pub auto_update_on_start: bool,
     pub auto_restart_on_crash: bool,
     pub max_backup_retention: u32,
+    #[serde(default = "default_web_server_port")]
+    pub web_server_port: u16,
+}
+
+pub fn default_web_server_port() -> u16 {
+    18080
 }
 
 impl Default for GlobalSettings {
@@ -27,6 +33,7 @@ impl Default for GlobalSettings {
             auto_update_on_start: true,
             auto_restart_on_crash: true,
             max_backup_retention: 7,
+            web_server_port: 18080,
         }
     }
 }
@@ -69,6 +76,8 @@ pub struct ServerInstance {
     pub pid: Option<u32>,
     pub last_started_at: Option<String>,
     pub last_stopped_at: Option<String>,
+    #[serde(default)]
+    pub server_version: String,
     pub version_state: String,
     pub last_error: Option<String>,
 }

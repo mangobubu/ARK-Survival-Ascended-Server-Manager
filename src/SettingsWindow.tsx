@@ -10,27 +10,41 @@ import {
   SettingOutlined,
 } from '@ant-design/icons'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Button, Form, Input, InputNumber, Radio, Select, Space, Switch, Typography, message } from 'antd'
+import { checkSteamCmd } from './backendApi'
 import { loadGlobalSettings, loadGlobalSettingsFromBackend, saveGlobalSettings } from './globalSettings'
-import type { GlobalSettings, SteamCmdCheck } from './types'
+import { isTauriRuntime } from './runtime'
+import type { GlobalSettings } from './types'
 
 const { Text, Title } = Typography
 
-export default function SettingsWindow() {
+interface SettingsWindowProps {
+  onClose?: () => void
+}
+
+export default function SettingsWindow({ onClose }: SettingsWindowProps = {}) {
   const [form] = Form.useForm<GlobalSettings>()
   const [messageApi, contextHolder] = message.useMessage()
   const [selectingPath, setSelectingPath] = useState<keyof GlobalSettings | null>(null)
   const [settings, setSettings] = useState<GlobalSettings>(loadGlobalSettings)
   const [saving, setSaving] = useState(false)
+  const watchedWebPort = Form.useWatch('webServerPort', form) ?? settings.webServerPort
+
+  const closeWindow = () => {
+    if (onClose) {
+      onClose()
+      return
+    }
+    if (isTauriRuntime()) void getCurrentWindow().close()
+  }
 
   const handleFinish = async (values: GlobalSettings) => {
     setSaving(true)
     try {
       let steamCmdPath = values.steamCmdPath
       if (values.steamCmdPath !== settings.steamCmdPath) {
-        const check = await invoke<SteamCmdCheck>('check_steamcmd', { path: values.steamCmdPath })
+        const check = await checkSteamCmd(values.steamCmdPath)
         if (!check.valid) {
           messageApi.error(`SteamCMD 目录无效：${check.reason ?? '未找到 steamcmd.exe'}`)
           return
@@ -39,9 +53,9 @@ export default function SettingsWindow() {
       }
       const next = await saveGlobalSettings({ ...values, steamCmdPath })
       setSettings(next)
-      messageApi.success('全局设置已保存')
+      messageApi.success(values.webServerPort !== settings.webServerPort ? '全局设置已保存，Web 端口将在重启应用后生效' : '全局设置已保存')
       window.setTimeout(() => {
-        void getCurrentWindow().close()
+        closeWindow()
       }, 600)
     } catch (error) {
       messageApi.error(`无法保存全局设置：${String(error)}`)
@@ -66,6 +80,10 @@ export default function SettingsWindow() {
     setSelectingPath(field)
 
     try {
+      if (!isTauriRuntime()) {
+        messageApi.info('Web 版无法打开本机目录选择器，请手动输入运行主机上的绝对路径')
+        return
+      }
       const currentPath = form.getFieldValue(field)
       const selectedPath = await open({
         defaultPath: currentPath || undefined,
@@ -76,7 +94,7 @@ export default function SettingsWindow() {
 
       if (selectedPath) {
         if (field === 'steamCmdPath') {
-          const check = await invoke<SteamCmdCheck>('check_steamcmd', { path: selectedPath })
+          const check = await checkSteamCmd(selectedPath)
           if (!check.valid) {
             messageApi.error(`SteamCMD 目录无效：${check.reason ?? '未找到 steamcmd.exe'}`)
             return
@@ -155,6 +173,31 @@ export default function SettingsWindow() {
 
             <section className="settings-card">
               <div className="settings-card__heading settings-card__heading--compact">
+                <div className="settings-card__icon"><GlobalOutlined /></div>
+                <div><h2>Web 访问</h2><p>浏览器版本入口与监听端口</p></div>
+              </div>
+              <div className="settings-card__body settings-card__body--two-column">
+                <Form.Item
+                  label="Web 访问端口"
+                  name="webServerPort"
+                  tooltip="应用启动时读取该端口；修改保存后需要重启应用才会生效"
+                  rules={[
+                    { required: true, message: '请输入 Web 访问端口' },
+                    { type: 'number', min: 1024, max: 65535, message: '端口必须在 1024-65535 之间' },
+                  ]}
+                >
+                  <InputNumber min={1024} max={65535} addonBefore="127.0.0.1:" style={{ width: '100%' }} />
+                </Form.Item>
+                <div className="settings-web-port-note">
+                  <Text type="secondary">当前/重启后访问地址：</Text>
+                  <Text code copyable={{ text: `http://127.0.0.1:${watchedWebPort}` }}>http://127.0.0.1:{watchedWebPort}</Text>
+                  <Text type="secondary">端口修改保存后不会立即迁移当前 Web 服务，请重启应用后生效。</Text>
+                </div>
+              </div>
+            </section>
+
+            <section className="settings-card">
+              <div className="settings-card__heading settings-card__heading--compact">
                 <div className="settings-card__icon"><DatabaseOutlined /></div>
                 <div><h2>运行与存储路径</h2><p>SteamCMD、实例与备份文件位置</p></div>
               </div>
@@ -200,7 +243,7 @@ export default function SettingsWindow() {
         <footer className="settings-footer">
           <Text type="secondary">设置仅保存在当前设备</Text>
           <Space>
-            <Button onClick={() => getCurrentWindow().close()}>取消</Button>
+            <Button onClick={closeWindow}>取消</Button>
             <Button loading={saving} type="primary" icon={<SaveOutlined />} htmlType="submit">保存设置</Button>
           </Space>
         </footer>

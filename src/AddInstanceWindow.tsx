@@ -17,6 +17,7 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { Button, Form, Input, InputNumber, Radio, Select, Space, Switch, Tooltip, Typography, message } from 'antd'
 import { checkInstancePort, createInstance, readServerDirectoryConfig } from './backendApi'
 import { defaultConfig, defaultGlobalSettings, serverMapOptions } from './data'
+import { isTauriRuntime } from './runtime'
 import type {
   AddInstancePayload,
   ImportedServerConfigPreview,
@@ -70,16 +71,22 @@ interface AddInstanceFormValues {
   description: string
 }
 
-function readNumberParam(name: string, fallback: number) {
-  const value = Number(new URLSearchParams(window.location.search).get(name))
+interface AddInstanceWindowProps {
+  initialParams?: URLSearchParams
+  onCreated?: (payload: InstanceCreatedEvent) => void
+  onClose?: () => void
+}
+
+function readNumberParam(params: URLSearchParams, name: string, fallback: number) {
+  const value = Number(params.get(name))
   return Number.isFinite(value) && value > 0 ? value : fallback
 }
 
-function readTextParam(name: string, fallback: string) {
-  return new URLSearchParams(window.location.search).get(name) ?? fallback
+function readTextParam(params: URLSearchParams, name: string, fallback: string) {
+  return params.get(name) ?? fallback
 }
 
-export default function AddInstanceWindow() {
+export default function AddInstanceWindow({ initialParams, onCreated, onClose }: AddInstanceWindowProps = {}) {
   const [form] = Form.useForm<AddInstanceFormValues>()
   const [messageApi, contextHolder] = message.useMessage()
   const [submitting, setSubmitting] = useState(false)
@@ -87,8 +94,14 @@ export default function AddInstanceWindow() {
   const [importedPreview, setImportedPreview] = useState<ImportedServerConfigPreview | null>(null)
   const [portChecks, setPortChecks] = useState<Record<PortField, PortCheckState>>(createInitialPortChecks)
   const portCheckRequestRef = useRef(0)
+  const params = useMemo(() => initialParams ?? new URLSearchParams(window.location.search), [initialParams])
 
   const closeCurrentWindow = async () => {
+    if (onClose) {
+      onClose()
+      return
+    }
+    if (!isTauriRuntime()) return
     try {
       await WebviewWindow.getCurrent().close()
     } catch (error) {
@@ -97,23 +110,23 @@ export default function AddInstanceWindow() {
     }
   }
 
-  const sequence = readNumberParam('index', 10)
-  const defaultName = `ASA-${String(sequence).padStart(2, '0')}`
+  const sequence = readNumberParam(params, 'index', 10)
+  const defaultName = 'ASA-' + String(sequence).padStart(2, '0')
   const initialValues = useMemo<AddInstanceFormValues>(() => ({
     name: defaultName,
     mapCode: 'TheIsland_WP',
     mode: 'PvE',
-    gamePort: readNumberParam('gamePort', 7867),
-    queryPort: readNumberParam('queryPort', 27105),
-    rconPort: readNumberParam('rconPort', 32340),
+    gamePort: readNumberParam(params, 'gamePort', 7867),
+    queryPort: readNumberParam(params, 'queryPort', 27105),
+    rconPort: readNumberParam(params, 'rconPort', 32340),
     maxPlayers: defaultConfig.maxPlayers,
-    installPath: `${readTextParam('serverRoot', defaultGlobalSettings.serverStoragePath)}\\${defaultName}`,
+    installPath: readTextParam(params, 'serverRoot', defaultGlobalSettings.serverStoragePath) + '\\' + defaultName,
     clusterId: defaultConfig.clusterId,
     serverPassword: defaultConfig.serverPassword,
     adminPassword: defaultConfig.adminPassword,
     autoInstall: true,
     description: '',
-  }), [defaultName])
+  }), [defaultName, params])
 
   const watchedValues = Form.useWatch([], form) ?? initialValues
   const selectedMap = serverMapOptions.find((item) => item.code === watchedValues.mapCode) ?? serverMapOptions[0]
@@ -268,6 +281,10 @@ export default function AddInstanceWindow() {
   const selectServerDirectory = async () => {
     setSelectingDirectory(true)
     try {
+      if (!isTauriRuntime()) {
+        messageApi.info('Web 版无法打开本机目录选择器，请手动输入运行主机上的 ASA 服务端文件夹路径')
+        return
+      }
       const selectedPath = await open({
         defaultPath: form.getFieldValue('installPath') || undefined,
         directory: true,
@@ -348,7 +365,11 @@ export default function AddInstanceWindow() {
     try {
       const instance = await createInstance(payload)
       const eventPayload: InstanceCreatedEvent = { instance, autoInstall: payload.autoInstall }
-      await emitTo(MAIN_WINDOW_LABEL, ADD_INSTANCE_CREATED_EVENT, eventPayload)
+      if (onCreated) {
+        onCreated(eventPayload)
+      } else if (isTauriRuntime()) {
+        await emitTo(MAIN_WINDOW_LABEL, ADD_INSTANCE_CREATED_EVENT, eventPayload)
+      }
       messageApi.success('实例已创建')
       window.setTimeout(() => {
         void closeCurrentWindow()

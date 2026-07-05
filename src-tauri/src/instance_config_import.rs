@@ -28,6 +28,7 @@ const MAPS: &[(&str, &str)] = &[
 #[derive(Default)]
 struct IniDocument {
     sections: HashMap<String, HashMap<String, String>>,
+    repeated_values: HashMap<String, HashMap<String, Vec<String>>>,
 }
 
 impl IniDocument {
@@ -39,6 +40,16 @@ impl IniDocument {
                 .and_then(|values| values.get(&key))
                 .map(String::as_str)
         })
+    }
+
+    fn get_all(&self, sections: &[&str], key: &str) -> Vec<&str> {
+        let key = normalize_ini_name(key);
+        sections
+            .iter()
+            .filter_map(|section| self.repeated_values.get(&normalize_ini_name(section)))
+            .filter_map(|values| values.get(&key))
+            .flat_map(|values| values.iter().map(String::as_str))
+            .collect()
     }
 }
 
@@ -486,6 +497,66 @@ fn read_game_ini(document: &IniDocument, config: &mut Map<String, Value>) {
     ] {
         map_bool(document, config, GAME_MODE_SETTINGS, ini_key, config_key);
     }
+
+    let item_stack_overrides = document
+        .get_all(GAME_MODE_SETTINGS, "ConfigOverrideItemMaxQuantity")
+        .into_iter()
+        .filter_map(parse_item_stack_override)
+        .collect::<Vec<_>>();
+    if !item_stack_overrides.is_empty() {
+        config.insert(
+            "itemStackOverrides".to_string(),
+            Value::Array(item_stack_overrides),
+        );
+    }
+}
+
+fn parse_item_stack_override(value: &str) -> Option<Value> {
+    let item_class_string = extract_assignment(value, "ItemClassString")?;
+    let max_item_quantity = extract_u32_assignment(value, "MaxItemQuantity").unwrap_or(1);
+    let ignore_multiplier = extract_bool_assignment(value, "bIgnoreMultiplier").unwrap_or(true);
+
+    Some(json!({
+        "itemClassString": item_class_string,
+        "maxItemQuantity": max_item_quantity,
+        "ignoreMultiplier": ignore_multiplier,
+    }))
+}
+
+fn extract_assignment(value: &str, key: &str) -> Option<String> {
+    let start = value.find(key)? + key.len();
+    let rest = value[start..].trim_start();
+    let rest = rest.strip_prefix('=')?.trim_start();
+
+    if let Some(rest) = rest.strip_prefix('"') {
+        let end = rest.find('"')?;
+        let text = rest[..end].trim();
+        return (!text.is_empty()).then(|| text.to_string());
+    }
+
+    let end = rest
+        .find(|character| matches!(character, ',' | ')' | '('))
+        .unwrap_or(rest.len());
+    let text = rest[..end].trim().trim_matches('"');
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+fn extract_u32_assignment(value: &str, key: &str) -> Option<u32> {
+    extract_assignment(value, key)?
+        .parse::<u32>()
+        .ok()
+        .filter(|value| *value > 0)
+}
+
+fn extract_bool_assignment(value: &str, key: &str) -> Option<bool> {
+    match extract_assignment(value, key)?
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
 }
 
 fn read_engine_ini(document: &IniDocument, config: &mut Map<String, Value>) {
@@ -531,11 +602,20 @@ fn parse_ini(content: &str) -> IniDocument {
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
+        let key = normalize_ini_name(key);
+        let value = clean_ini_value(value);
         document
             .sections
             .entry(current_section.clone())
             .or_default()
-            .insert(normalize_ini_name(key), clean_ini_value(value));
+            .insert(key.clone(), value.clone());
+        document
+            .repeated_values
+            .entry(current_section.clone())
+            .or_default()
+            .entry(key)
+            .or_default()
+            .push(value);
     }
 
     document
@@ -996,6 +1076,8 @@ ResourceNoReplenishRadiusPlayers=2.5
 MatingIntervalMultiplier=0.2
 bDisableStructurePlacementCollision=True
 bAllowSpeedLeveling=True
+ConfigOverrideItemMaxQuantity=(ItemClassString="PrimalItemResource_Stone_C",Quantity=(MaxItemQuantity=1000,bIgnoreMultiplier=True))
+ConfigOverrideItemMaxQuantity=(ItemClassString="PrimalItemResource_Wood_C",Quantity=(MaxItemQuantity=500,bIgnoreMultiplier=False))
 "#,
         )
         .expect("写入 Game.ini");
@@ -1046,6 +1128,21 @@ MaxClientRate=150000
         assert_eq!(preview.config["difficulty"], json!(7.0));
         assert_eq!(preview.config["disablePlacementCollision"], json!(true));
         assert_eq!(preview.config["allowSpeedLeveling"], json!(true));
+        assert_eq!(
+            preview.config["itemStackOverrides"],
+            json!([
+                {
+                    "itemClassString": "PrimalItemResource_Stone_C",
+                    "maxItemQuantity": 1000,
+                    "ignoreMultiplier": true
+                },
+                {
+                    "itemClassString": "PrimalItemResource_Wood_C",
+                    "maxItemQuantity": 500,
+                    "ignoreMultiplier": false
+                }
+            ])
+        );
     }
 
     #[test]

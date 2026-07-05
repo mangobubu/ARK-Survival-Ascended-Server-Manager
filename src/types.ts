@@ -9,6 +9,7 @@ export interface GlobalSettings {
   autoUpdateOnStart: boolean
   autoRestartOnCrash: boolean
   maxBackupRetention: number
+  webServerPort: number
 }
 
 export interface SteamCmdCheck {
@@ -49,6 +50,7 @@ export interface ServerInstance {
   pid: number | null
   lastStartedAt: string | null
   lastStoppedAt: string | null
+  serverVersion: string
   versionState: string
   lastError: string | null
 }
@@ -99,6 +101,21 @@ export interface ModItem {
   updateAvailable?: boolean
 }
 
+export interface ItemStackOption {
+  label: string
+  zhLabel?: string
+  classString: string
+  category: string
+  zhCategory?: string
+  defaultStackSize: number
+}
+
+export interface ItemStackOverride {
+  itemClassString: string
+  maxItemQuantity: number
+  ignoreMultiplier: boolean
+}
+
 export interface LogLine {
   id: number
   time: string
@@ -107,6 +124,12 @@ export interface LogLine {
   instance: string
   level: 'info' | 'success' | 'warn' | 'error'
   message: string
+}
+
+export interface LogClearScope {
+  source: LogLine['source']
+  instance?: string | null
+  serverLogKind?: NonNullable<LogLine['serverLogKind']> | null
 }
 
 export interface JobProgress {
@@ -200,6 +223,7 @@ export interface ServerConfig {
   fishingLootQualityMultiplier: number
   fuelConsumptionIntervalMultiplier: number
   itemStackSizeMultiplier: number
+  itemStackOverrides: ItemStackOverride[]
   globalSpoilingTimeMultiplier: number
   globalItemDecompositionTimeMultiplier: number
   globalCorpseDecompositionTimeMultiplier: number

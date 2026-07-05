@@ -36,3 +36,7 @@ src-tauri/target/
 
 # Vite
 .vite/
+
+# Local tool/runtime state
+.codex/config.toml
+.tauri-web-dev.pid
