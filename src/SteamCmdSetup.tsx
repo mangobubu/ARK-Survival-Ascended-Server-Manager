@@ -20,6 +20,7 @@ const { Text, Title } = Typography
 interface SteamCmdSetupProps {
   settings: GlobalSettings
   onSettingsChange: (settings: GlobalSettings) => void
+  settingsReady?: boolean
 }
 
 type Availability = 'checking' | 'ready' | 'missing'
@@ -52,7 +53,7 @@ function phaseLabel(phase: SteamCmdProgress['phase']) {
   return '正在下载'
 }
 
-export default function SteamCmdSetup({ settings, onSettingsChange }: SteamCmdSetupProps) {
+export default function SteamCmdSetup({ settings, onSettingsChange, settingsReady = true }: SteamCmdSetupProps) {
   const [messageApi, contextHolder] = message.useMessage()
   const [availability, setAvailability] = useState<Availability>('checking')
   const [guideOpen, setGuideOpen] = useState(false)
@@ -63,6 +64,7 @@ export default function SteamCmdSetup({ settings, onSettingsChange }: SteamCmdSe
   const [lastParentPath, setLastParentPath] = useState<string | null>(null)
   const lastCheckedPath = useRef<string | null>(null)
   const initialCheckCompleted = useRef(false)
+  const checkRequestId = useRef(0)
 
   const applySteamCmdPath = useCallback((path: string) => {
     const next = { ...settings, steamCmdPath: path }
@@ -77,9 +79,12 @@ export default function SteamCmdSetup({ settings, onSettingsChange }: SteamCmdSe
   }, [messageApi, onSettingsChange, settings])
 
   const checkConfiguredPath = useCallback(async (showGuide: boolean) => {
+    const requestId = ++checkRequestId.current
     setAvailability('checking')
     try {
       const result = await checkSteamCmd(settings.steamCmdPath)
+      if (requestId !== checkRequestId.current) return
+
       if (result.valid) {
         setAvailability('ready')
         setGuideOpen(false)
@@ -88,6 +93,8 @@ export default function SteamCmdSetup({ settings, onSettingsChange }: SteamCmdSe
         if (showGuide) setGuideOpen(true)
       }
     } catch (error) {
+      if (requestId !== checkRequestId.current) return
+
       setAvailability('missing')
       if (showGuide) setGuideOpen(true)
       console.error('检查 SteamCMD 失败', error)
@@ -95,13 +102,14 @@ export default function SteamCmdSetup({ settings, onSettingsChange }: SteamCmdSe
   }, [settings.steamCmdPath])
 
   useEffect(() => {
+    if (!settingsReady) return
     if (lastCheckedPath.current === settings.steamCmdPath) return
     lastCheckedPath.current = settings.steamCmdPath
     const showGuide = !initialCheckCompleted.current
     void checkConfiguredPath(showGuide).finally(() => {
       initialCheckCompleted.current = true
     })
-  }, [settings.steamCmdPath, checkConfiguredPath])
+  }, [settingsReady, settings.steamCmdPath, checkConfiguredPath])
 
   const selectExistingDirectory = async () => {
     setCheckingDirectory(true)

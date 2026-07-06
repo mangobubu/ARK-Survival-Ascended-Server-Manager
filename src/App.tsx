@@ -34,6 +34,7 @@ import {
   applyInstanceConfig,
   checkModUpdates,
   checkSteamCmd,
+  clearStartupAutoUpdateSkipFlags,
   clearLogs,
   clearScopedLogs,
   createBackup,
@@ -58,6 +59,7 @@ import RconWindow from './RconWindow'
 import { isTauriRuntime } from './runtime'
 import SettingsWindow from './SettingsWindow'
 import SteamCmdSetup from './SteamCmdSetup'
+import { currentWindowBackgroundColor } from './themePreference'
 import {
   ADD_INSTANCE_CREATED_EVENT,
   INSTANCE_CONFIG_CHANGED_EVENT,
@@ -377,6 +379,7 @@ export default function App() {
   const [logs, setLogs] = useState<LogLine[]>([])
   const [dirty, setDirty] = useState(false)
   const [globalSettings, setGlobalSettings] = useState<GlobalSettings>(loadGlobalSettings)
+  const childWindowBackgroundColor = currentWindowBackgroundColor(globalSettings.theme)
   const [initialDataReady, setInitialDataReady] = useState(false)
   const [jobProgress, setJobProgress] = useState<Record<string, JobProgress>>({})
   const [checkingMods, setCheckingMods] = useState(false)
@@ -795,8 +798,13 @@ export default function App() {
       }
 
       const candidates: ServerInstance[] = []
+      const skippedRecovered: ServerInstance[] = []
       for (const item of instancesRef.current) {
         if (!['stopped', 'error'].includes(item.status)) continue
+        if (item.skipAutoUpdateOnStartOnce) {
+          skippedRecovered.push(item)
+          continue
+        }
         try {
           const instanceConfig = await getInstanceConfig(item.id)
           if (instanceConfig.autoUpdateServer ?? true) {
@@ -804,6 +812,17 @@ export default function App() {
           }
         } catch (error) {
           messageApi.warning(`${item.name} 启动时检查更新配置读取失败：${String(error)}`)
+        }
+      }
+
+      if (skippedRecovered.length > 0) {
+        const names = skippedRecovered.map((item) => item.name).join('、')
+        messageApi.warning(`已跳过 ${names} 的启动自动更新：该实例是从上次中断的安装/更新状态恢复而来，请确认后手动执行安装/更新`)
+        try {
+          const updated = await clearStartupAutoUpdateSkipFlags(skippedRecovered.map((item) => item.id))
+          updated.forEach(replaceInstance)
+        } catch (error) {
+          messageApi.warning(`清除启动自动更新跳过标记失败：${String(error)}`)
         }
       }
 
@@ -815,7 +834,7 @@ export default function App() {
     })().catch((error) => {
       messageApi.error(`启动时检查更新失败：${String(error)}`)
     })
-  }, [globalSettings.autoUpdateOnStart, globalSettings.steamCmdPath, initialDataReady, messageApi])
+  }, [globalSettings.autoUpdateOnStart, globalSettings.steamCmdPath, initialDataReady, messageApi, replaceInstance])
 
   const startInstance = async (item: ServerInstance) => {
     try {
@@ -987,7 +1006,7 @@ export default function App() {
         resizable: false,
         maximizable: false,
         parent: MAIN_WINDOW_LABEL,
-        backgroundColor: '#020a13',
+        backgroundColor: childWindowBackgroundColor,
       })
 
       webview.once('tauri://error', (event) => {
@@ -1015,6 +1034,7 @@ export default function App() {
       center: true,
       resizable: true,
       parent: MAIN_WINDOW_LABEL,
+      backgroundColor: childWindowBackgroundColor,
     })
 
     webview.once('tauri://error', (event) => {
@@ -1054,7 +1074,7 @@ export default function App() {
         center: true,
         resizable: true,
         parent: MAIN_WINDOW_LABEL,
-        backgroundColor: '#020a13',
+        backgroundColor: childWindowBackgroundColor,
       })
 
       webview.once('tauri://error', (event) => {
@@ -1064,7 +1084,7 @@ export default function App() {
     } catch (error) {
       messageApi.error(`无法打开 RCON 管理窗口：${String(error)}`)
     }
-  }, [messageApi])
+  }, [childWindowBackgroundColor, messageApi])
 
   const runForSelected = async (action: (item: ServerInstance) => Promise<void> | void) => {
     const selectedItems = instances.filter((item) => selectedRows.includes(item.id))
@@ -1305,7 +1325,11 @@ export default function App() {
       </header>
 
       <main className="workspace">
-        <SteamCmdSetup settings={globalSettings} onSettingsChange={setGlobalSettings} />
+        <SteamCmdSetup
+          settings={globalSettings}
+          settingsReady={initialDataReady}
+          onSettingsChange={setGlobalSettings}
+        />
         <section className="stats-grid">
           <StatCard icon={<CloudServerOutlined />} label="总服务器数" value={instances.length} suffix="个实例" />
           <StatCard icon={<CheckCircleOutlined />} label="运行中" value={`${running} / ${instances.length}`} suffix="个实例" tone="green" />

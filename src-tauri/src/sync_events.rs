@@ -1,10 +1,8 @@
 use serde::Serialize;
 use serde_json::Value;
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 use tokio::sync::broadcast;
 

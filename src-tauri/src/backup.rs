@@ -280,6 +280,7 @@ mod tests {
             server_version: String::new(),
             version_state: "已安装".to_string(),
             last_error: None,
+            skip_auto_update_on_start_once: false,
         }
     }
 

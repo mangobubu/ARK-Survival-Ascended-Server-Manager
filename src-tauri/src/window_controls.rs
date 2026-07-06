@@ -1,8 +1,8 @@
 use crate::{
+    MAIN_WINDOW_LABEL,
     app_state::AppRuntime,
     models::{GlobalSettings, WindowCloseBehavior},
     sync_events::{SETTINGS_CHANGED_EVENT, SyncEventBus},
-    MAIN_WINDOW_LABEL,
 };
 use serde::Serialize;
 use std::{
@@ -13,9 +13,10 @@ use std::{
     thread,
 };
 use tauri::{
-    App, AppHandle, Emitter, Manager, Runtime, WebviewWindow, WindowEvent,
+    App, AppHandle, Emitter, Manager, Runtime, Theme, WebviewWindow, WindowEvent,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
+    webview::Color,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -23,6 +24,9 @@ const TRAY_ID: &str = "asa-main-tray";
 const TRAY_SHOW_ID: &str = "tray-show-main-window";
 const TRAY_TOGGLE_ID: &str = "tray-toggle-main-window";
 const TRAY_EXIT_ID: &str = "tray-exit-app";
+const THEME_PREFERENCE_STORAGE_KEY: &str = "asa-theme-preference";
+const DARK_WINDOW_BACKGROUND: Color = Color(2, 10, 19, 255);
+const LIGHT_WINDOW_BACKGROUND: Color = Color(243, 247, 251, 255);
 
 pub struct WindowControlState {
     tray: Mutex<Option<TrayIcon>>,
@@ -51,7 +55,11 @@ pub fn setup_window_controls(app: &mut App, runtime: &AppRuntime) -> tauri::Resu
     app.manage(Arc::clone(&state));
 
     build_tray(app, Arc::clone(&state))?;
-    apply_settings(app.handle(), &state, &runtime.settings().unwrap_or_default());
+    apply_settings(
+        app.handle(),
+        &state,
+        &runtime.settings().unwrap_or_default(),
+    );
 
     Ok(())
 }
@@ -99,7 +107,10 @@ pub fn handle_main_window_event<R: Runtime>(
     }
 }
 
-pub fn request_full_shutdown<R: Runtime>(app_handle: &AppHandle<R>, state: &Arc<WindowControlState>) {
+pub fn request_full_shutdown<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    state: &Arc<WindowControlState>,
+) {
     if state.is_shutting_down.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -171,12 +182,71 @@ fn build_tray(app: &mut App, state: Arc<WindowControlState>) -> tauri::Result<()
 }
 
 fn apply_settings(app: &AppHandle, state: &Arc<WindowControlState>, settings: &GlobalSettings) {
+    apply_window_theme_preference(app, settings);
     state.hotkey.register(
         settings.global_toggle_shortcut_key.clone(),
         app.clone(),
         Arc::clone(state),
     );
     apply_tray_visibility(app, state, settings);
+}
+
+fn apply_window_theme_preference<R: Runtime>(app_handle: &AppHandle<R>, settings: &GlobalSettings) {
+    let native_theme = native_theme_preference(settings);
+    app_handle.set_theme(native_theme);
+
+    for window in app_handle.webview_windows().values() {
+        apply_single_window_theme(window, settings);
+    }
+}
+
+fn apply_single_window_theme<R: Runtime>(window: &WebviewWindow<R>, settings: &GlobalSettings) {
+    let _ = window.set_theme(native_theme_preference(settings));
+    let _ = window.set_background_color(Some(window_background_color(window, settings)));
+    let _ = window.eval(theme_bootstrap_script(settings));
+}
+
+fn native_theme_preference(settings: &GlobalSettings) -> Option<Theme> {
+    match settings.theme.as_str() {
+        "light" => Some(Theme::Light),
+        "dark" => Some(Theme::Dark),
+        _ => None,
+    }
+}
+
+fn window_background_color<R: Runtime>(
+    window: &WebviewWindow<R>,
+    settings: &GlobalSettings,
+) -> Color {
+    match settings.theme.as_str() {
+        "light" => LIGHT_WINDOW_BACKGROUND,
+        "dark" => DARK_WINDOW_BACKGROUND,
+        _ => match window.theme().unwrap_or(Theme::Dark) {
+            Theme::Light => LIGHT_WINDOW_BACKGROUND,
+            Theme::Dark => DARK_WINDOW_BACKGROUND,
+            _ => DARK_WINDOW_BACKGROUND,
+        },
+    }
+}
+
+fn theme_bootstrap_script(settings: &GlobalSettings) -> String {
+    let theme = serde_json::to_string(&settings.theme).unwrap_or_else(|_| "\"dark\"".to_string());
+    format!(
+        r#";(() => {{
+  const theme = {theme};
+  const storageKey = "{THEME_PREFERENCE_STORAGE_KEY}";
+  try {{ localStorage.setItem(storageKey, theme); }} catch {{}}
+  const systemDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true;
+  const resolvedTheme = theme === 'system' ? (systemDark ? 'dark' : 'light') : theme;
+  const root = document.documentElement;
+  root.dataset.theme = theme;
+  root.dataset.resolvedTheme = resolvedTheme;
+  root.style.colorScheme = resolvedTheme;
+  root.classList.toggle('theme-light', resolvedTheme === 'light');
+  root.classList.toggle('theme-dark', resolvedTheme === 'dark');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolvedTheme === 'light' ? '#f3f7fb' : '#020c17');
+}})();"#
+    )
 }
 
 fn apply_tray_visibility_from_runtime<R: Runtime>(
@@ -210,7 +280,10 @@ fn set_tray_visible(state: &Arc<WindowControlState>, visible: bool) {
     }
 }
 
-fn ask_before_close_or_hide<R: Runtime>(window: &WebviewWindow<R>, state: &Arc<WindowControlState>) {
+fn ask_before_close_or_hide<R: Runtime>(
+    window: &WebviewWindow<R>,
+    state: &Arc<WindowControlState>,
+) {
     let app_handle = window.app_handle().clone();
     let state = Arc::clone(state);
     window
@@ -283,7 +356,10 @@ impl PlatformHotkeyState {
         };
 
         let mut guard = self.inner.lock().expect("快捷键状态锁已损坏");
-        if guard.as_ref().is_some_and(|handle| handle.key == normalized) {
+        if guard
+            .as_ref()
+            .is_some_and(|handle| handle.key == normalized)
+        {
             return;
         }
         if let Some(handle) = guard.take() {
@@ -339,20 +415,18 @@ impl WindowsHotkeyHandle {
         };
 
         let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
-            unsafe {
-                let thread_id = GetCurrentThreadId();
-                let mut bootstrap = std::mem::zeroed::<MSG>();
-                let _ = PeekMessageW(&mut bootstrap, std::ptr::null_mut(), 0, 0, PM_NOREMOVE);
-                let modifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
-                if RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID, modifiers, vk) == 0 {
-                    let _ = tx.send(Err("快捷键可能已被其他程序占用".to_string()));
-                    return;
-                }
-
-                let _ = tx.send(Ok(thread_id));
-                hotkey_message_loop(app, state);
+        thread::spawn(move || unsafe {
+            let thread_id = GetCurrentThreadId();
+            let mut bootstrap = std::mem::zeroed::<MSG>();
+            let _ = PeekMessageW(&mut bootstrap, std::ptr::null_mut(), 0, 0, PM_NOREMOVE);
+            let modifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
+            if RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID, modifiers, vk) == 0 {
+                let _ = tx.send(Err("快捷键可能已被其他程序占用".to_string()));
+                return;
             }
+
+            let _ = tx.send(Ok(thread_id));
+            hotkey_message_loop(app, state);
         });
 
         let thread_id = rx
@@ -439,7 +513,10 @@ fn shortcut_key_to_vk(key: &str) -> Option<u32> {
         }
     }
 
-    if let Some(number) = key.strip_prefix('F').and_then(|value| value.parse::<u32>().ok()) {
+    if let Some(number) = key
+        .strip_prefix('F')
+        .and_then(|value| value.parse::<u32>().ok())
+    {
         if (1..=24).contains(&number) {
             return Some(0x70 + number - 1);
         }
@@ -467,8 +544,8 @@ pub fn publish_settings_changed_and_apply<T: Serialize>(
     event_name: &str,
     payload: T,
 ) -> Result<(), String> {
-    let payload = serde_json::to_value(payload)
-        .map_err(|error| format!("序列化同步事件失败：{error}"))?;
+    let payload =
+        serde_json::to_value(payload).map_err(|error| format!("序列化同步事件失败：{error}"))?;
 
     app.emit(event_name, payload.clone())
         .map_err(|error| format!("发送同步事件失败：{error}"))?;

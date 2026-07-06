@@ -208,6 +208,72 @@ button, input, textarea { font: inherit; }
   background: rgba(2, 12, 21, .92);
 }
 
+.web-login-captcha {
+  margin-bottom: 18px;
+  padding: 12px;
+  border: 1px solid rgba(96, 214, 255, .22);
+  border-radius: 10px;
+  background: rgba(2, 13, 24, .58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+
+.web-login-captcha__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.web-login-captcha__head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.web-login-captcha__head strong {
+  color: #dff6ff;
+  font-size: 13px;
+}
+
+.web-login-captcha__head span {
+  color: #829caf;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.web-login-captcha__body {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.web-login-captcha__image {
+  height: 56px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(35, 123, 171, .56);
+  border-radius: 10px;
+  background: linear-gradient(145deg, rgba(3, 18, 31, .95), rgba(2, 11, 20, .95));
+}
+
+.web-login-captcha__image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.web-login-captcha__image span {
+  color: #6f8799;
+  font-size: 11px;
+}
+
+.web-login-captcha .ant-form-item {
+  margin-bottom: 0;
+}
+
 .web-login-submit.ant-btn {
   height: 44px;
   margin-top: 6px;
@@ -1028,7 +1094,7 @@ button, input, textarea { font: inherit; }
 .settings-path-picker.ant-btn:hover,
 .settings-path-picker.ant-btn:focus-visible { color: #16b8ff; }
 
-.settings-automation-grid { display: grid; grid-template-columns: 1fr 1fr minmax(180px, .8fr); gap: 12px; align-items: end; }
+.settings-automation-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: end; }
 .settings-toggle-row { min-height: 54px; padding: 9px 11px; display: flex; align-items: center; gap: 10px; border: 1px solid #102e45; border-radius: 6px; background: rgba(2, 14, 24, .5); }
 .settings-toggle-row > div:first-child { min-width: 0; display: flex; flex-direction: column; }
 .settings-toggle-row strong { color: #bfd0dd; font-size: 11px; font-weight: 500; }
@@ -1120,6 +1186,113 @@ button, input, textarea { font: inherit; }
 .settings-web-auth-note .ant-typography:last-child {
   color: #9fb3c3;
   font-size: 11px;
+}
+
+.settings-web-proxy-note,
+.settings-web-captcha-note {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid rgba(22, 184, 255, .28);
+  border-radius: 7px;
+  background: linear-gradient(135deg, rgba(4, 34, 56, .72), rgba(2, 14, 24, .58));
+  color: #b6c8d6;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.settings-web-captcha-note {
+  grid-column: 1 / -1;
+}
+
+.settings-web-whitelist-editor,
+.settings-web-ban-panel {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(22, 184, 255, .24);
+  border-radius: 8px;
+  background: rgba(2, 14, 24, .48);
+}
+
+.settings-web-whitelist-editor__head,
+.settings-web-ban-panel__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-web-whitelist-editor__head > div,
+.settings-web-ban-panel__head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-web-whitelist-editor__head strong,
+.settings-web-ban-panel__head strong {
+  color: #d9ecfb;
+}
+
+.settings-web-whitelist-editor__head span,
+.settings-web-ban-panel__head span {
+  color: #7f95a8;
+  font-size: 12px;
+}
+
+.settings-web-whitelist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-web-whitelist-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.15fr) minmax(140px, .7fr) minmax(220px, 1.2fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid rgba(20, 66, 98, .72);
+  border-radius: 7px;
+  background: rgba(4, 18, 31, .58);
+}
+
+.settings-web-whitelist-row .ant-form-item {
+  margin-bottom: 0;
+}
+
+.settings-web-ban-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-web-ban-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 80, 110, .22);
+  border-radius: 7px;
+  background: rgba(45, 9, 20, .28);
+}
+
+.settings-web-ban-row p {
+  margin: 6px 0 0;
+  color: #9fb3c3;
+  font-size: 12px;
+}
+
+@media (max-width: 980px) {
+  .settings-web-whitelist-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
 }
 
 @media (max-width: 980px) {
@@ -1524,7 +1697,11 @@ html.theme-light .steamcmd-progress-stats > div,
 html.theme-light .rcon-doc-item,
 html.theme-light .rcon-docs__note,
 html.theme-light .settings-web-port-note,
-html.theme-light .settings-web-auth-note {
+html.theme-light .settings-web-auth-note,
+html.theme-light .settings-web-proxy-note,
+html.theme-light .settings-web-captcha-note,
+html.theme-light .settings-web-whitelist-editor,
+html.theme-light .settings-web-ban-panel {
   border-color: #c9d9e6;
   background: rgba(255, 255, 255, .82);
 }
@@ -1588,11 +1765,41 @@ html.theme-light .settings-web-auth-note {
   color: #53677a;
 }
 
+html.theme-light .settings-web-proxy-note,
+html.theme-light .settings-web-captcha-note {
+  border-color: #b9d8ec;
+  background: linear-gradient(135deg, #f6fbff, #edf7fd);
+  color: #53677a;
+}
+
+html.theme-light .settings-web-whitelist-row {
+  border-color: #d5e3ef;
+  background: #f8fbff;
+}
+
+html.theme-light .settings-web-ban-row {
+  border-color: #f1c8d0;
+  background: #fff6f8;
+}
+
+html.theme-light .settings-web-whitelist-editor__head strong,
+html.theme-light .settings-web-ban-panel__head strong {
+  color: #172433;
+}
+
+html.theme-light .settings-web-whitelist-editor__head span,
+html.theme-light .settings-web-ban-panel__head span,
+html.theme-light .settings-web-ban-row p {
+  color: #5d7082;
+}
+
 html.theme-light .settings-popover-note {
   color: #53677a;
 }
 
-html.theme-light .settings-web-port-note code {
+html.theme-light .settings-web-port-note code,
+html.theme-light .settings-web-proxy-note code,
+html.theme-light .settings-web-captcha-note code {
   color: #0a6fa8;
   border-color: #c5d6e4;
   background: #eef7fd;

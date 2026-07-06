@@ -4,6 +4,7 @@ use crate::{
         AddInstancePayload, GlobalSettings, LogLine, LogSource, ModItem, PortCheckResult,
         ServerInstance, ServerLogKind, ServerStatus,
     },
+    web_auth,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -22,6 +23,7 @@ use tauri::{AppHandle, Manager};
 use tokio::process::Child;
 
 const STATE_FILE_NAME: &str = "manager-state.json";
+const SETTINGS_FILE_NAME: &str = "config.toml";
 const MAX_LOG_LINES: usize = 1_500;
 
 #[derive(Clone)]
@@ -42,6 +44,21 @@ pub struct ManagerData {
     pub logs: Vec<LogLine>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ManagerStateFile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    settings: Option<GlobalSettings>,
+    #[serde(default)]
+    instances: Vec<ServerInstance>,
+    #[serde(default)]
+    configs: HashMap<String, Value>,
+    #[serde(default)]
+    mods: HashMap<String, Vec<ModItem>>,
+    #[serde(default)]
+    logs: Vec<LogLine>,
+}
+
 impl Default for ManagerData {
     fn default() -> Self {
         Self {
@@ -56,14 +73,17 @@ impl Default for ManagerData {
 
 impl AppRuntime {
     pub fn load(app: &AppHandle) -> Result<Self, String> {
-        let data_dir = app
-            .path()
-            .app_data_dir()
-            .map_err(|error| format!("无法定位应用数据目录：{error}"))?;
+        let data_dir = resolve_app_data_dir(app)?;
         fs::create_dir_all(&data_dir)
             .map_err(|error| format!("无法创建应用数据目录 {}：{error}", data_dir.display()))?;
 
-        let data = read_data(&data_dir)?;
+        let had_settings_config = settings_config_path(&data_dir).exists();
+        let mut data = read_data(&data_dir)?;
+        let migrated_secrets = migrate_manager_data_secrets(&mut data)?;
+        let recovered_stale_updates = recover_stale_update_statuses(&mut data);
+        if !had_settings_config || migrated_secrets || recovered_stale_updates {
+            write_data(&data_dir, &data)?;
+        }
         Ok(Self {
             data_dir: Arc::new(data_dir),
             data: Arc::new(Mutex::new(data)),
@@ -74,6 +94,10 @@ impl AppRuntime {
 
     pub fn settings(&self) -> Result<GlobalSettings, String> {
         Ok(self.lock()?.settings.clone())
+    }
+
+    pub fn data_dir(&self) -> PathBuf {
+        self.data_dir.as_ref().clone()
     }
 
     pub fn save_settings(&self, settings: GlobalSettings) -> Result<GlobalSettings, String> {
@@ -371,6 +395,7 @@ impl AppRuntime {
             server_version: String::new(),
             version_state: "未安装".to_string(),
             last_error: None,
+            skip_auto_update_on_start_once: false,
         };
 
         let config = normalize_required_rcon_config(config_from_payload(&payload, &instance))?;
@@ -466,28 +491,7 @@ impl AppRuntime {
     ) -> Result<LogLine, String> {
         let line = {
             let mut data = self.lock()?;
-            let timestamp_id = now_millis();
-            let id = data
-                .logs
-                .last()
-                .map(|line| line.id.saturating_add(1))
-                .filter(|next_id| *next_id > timestamp_id)
-                .unwrap_or(timestamp_id);
-            let line = LogLine {
-                id,
-                time: current_time_text(),
-                source,
-                server_log_kind,
-                instance: instance.to_string(),
-                level: level.to_string(),
-                message: message.to_string(),
-            };
-            data.logs.push(line.clone());
-            if data.logs.len() > MAX_LOG_LINES {
-                let overflow = data.logs.len() - MAX_LOG_LINES;
-                data.logs.drain(0..overflow);
-            }
-            line
+            push_log_line(&mut data, source, server_log_kind, instance, level, message)
         };
         self.persist()?;
         Ok(line)
@@ -567,6 +571,36 @@ impl AppRuntime {
         Ok(self.lock_update_cancels()?.contains_key(instance_id))
     }
 
+    pub fn clear_startup_auto_update_skip_flags(
+        &self,
+        instance_ids: &[String],
+    ) -> Result<Vec<ServerInstance>, String> {
+        let targets: HashSet<&str> = instance_ids.iter().map(String::as_str).collect();
+        if targets.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut updated = Vec::new();
+        {
+            let mut data = self.lock()?;
+            for instance in &mut data.instances {
+                if !targets.contains(instance.id.as_str())
+                    || !instance.skip_auto_update_on_start_once
+                {
+                    continue;
+                }
+                instance.skip_auto_update_on_start_once = false;
+                updated.push(instance.clone());
+            }
+        }
+
+        if !updated.is_empty() {
+            self.persist()?;
+        }
+
+        Ok(updated)
+    }
+
     fn lock_update_cancels(
         &self,
     ) -> Result<std::sync::MutexGuard<'_, HashMap<String, Arc<AtomicBool>>>, String> {
@@ -619,10 +653,118 @@ impl AppRuntime {
     }
 }
 
+fn resolve_app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    #[cfg(any(test, debug_assertions))]
+    {
+        if let Some(data_dir) = debug_app_data_dir_override() {
+            return Ok(data_dir);
+        }
+    }
+
+    app.path()
+        .app_data_dir()
+        .map_err(|error| format!("无法定位应用数据目录：{error}"))
+}
+
+#[cfg(any(test, debug_assertions))]
+fn debug_app_data_dir_override() -> Option<PathBuf> {
+    std::env::var_os("ASA_MANAGER_DATA_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 fn read_data(data_dir: &Path) -> Result<ManagerData, String> {
+    let state = read_state_file(data_dir)?;
+    let settings = if settings_config_path(data_dir).exists() {
+        read_settings_config(data_dir)?
+    } else {
+        state.settings.unwrap_or_default()
+    };
+
+    Ok(ManagerData {
+        settings,
+        instances: state.instances,
+        configs: state.configs,
+        mods: state.mods,
+        logs: state.logs,
+    })
+}
+
+fn recover_stale_update_statuses(data: &mut ManagerData) -> bool {
+    let mut recovered_instances = Vec::new();
+
+    for instance in &mut data.instances {
+        if instance.status != ServerStatus::Updating {
+            continue;
+        }
+
+        instance.status = ServerStatus::Stopped;
+        instance.pid = None;
+        instance.players = 0;
+        instance.last_error = None;
+        instance.last_stopped_at = Some(current_timestamp_text());
+        instance.skip_auto_update_on_start_once = true;
+        recovered_instances.push(instance.name.clone());
+    }
+
+    let changed = !recovered_instances.is_empty();
+    for instance_name in recovered_instances {
+        push_log_line(
+            data,
+            LogSource::Application,
+            None,
+            &instance_name,
+            "warn",
+            "检测到上次安装/更新在管理器关闭前中断，已自动恢复为已停止；如需继续安装/校验，请重新执行安装/更新。",
+        );
+    }
+
+    changed
+}
+
+fn push_log_line(
+    data: &mut ManagerData,
+    source: LogSource,
+    server_log_kind: Option<ServerLogKind>,
+    instance: &str,
+    level: &str,
+    message: &str,
+) -> LogLine {
+    let timestamp_id = now_millis();
+    let id = data
+        .logs
+        .last()
+        .map(|line| line.id.saturating_add(1))
+        .filter(|next_id| *next_id > timestamp_id)
+        .unwrap_or(timestamp_id);
+    let line = LogLine {
+        id,
+        time: current_time_text(),
+        source,
+        server_log_kind,
+        instance: instance.to_string(),
+        level: level.to_string(),
+        message: message.to_string(),
+    };
+    data.logs.push(line.clone());
+    if data.logs.len() > MAX_LOG_LINES {
+        let overflow = data.logs.len() - MAX_LOG_LINES;
+        data.logs.drain(0..overflow);
+    }
+    line
+}
+
+fn write_data(data_dir: &Path, data: &ManagerData) -> Result<(), String> {
+    fs::create_dir_all(data_dir)
+        .map_err(|error| format!("无法创建应用数据目录 {}：{error}", data_dir.display()))?;
+    write_settings_config(data_dir, &data.settings)?;
+    write_state_file(data_dir, data)
+}
+
+fn read_state_file(data_dir: &Path) -> Result<ManagerStateFile, String> {
     let path = data_dir.join(STATE_FILE_NAME);
     if !path.exists() {
-        return Ok(ManagerData::default());
+        return Ok(ManagerStateFile::default());
     }
 
     let content = fs::read_to_string(&path)
@@ -631,17 +773,63 @@ fn read_data(data_dir: &Path) -> Result<ManagerData, String> {
         .map_err(|error| format!("管理器状态文件格式无效 {}：{error}", path.display()))
 }
 
-fn write_data(data_dir: &Path, data: &ManagerData) -> Result<(), String> {
-    fs::create_dir_all(data_dir)
-        .map_err(|error| format!("无法创建应用数据目录 {}：{error}", data_dir.display()))?;
+fn write_state_file(data_dir: &Path, data: &ManagerData) -> Result<(), String> {
     let path = data_dir.join(STATE_FILE_NAME);
     let temp_path = data_dir.join(format!("{STATE_FILE_NAME}.tmp"));
-    let content = serde_json::to_string_pretty(data)
+    let state = ManagerStateFile {
+        settings: None,
+        instances: data.instances.clone(),
+        configs: data.configs.clone(),
+        mods: data.mods.clone(),
+        logs: data.logs.clone(),
+    };
+    let content = serde_json::to_string_pretty(&state)
         .map_err(|error| format!("无法序列化管理器状态：{error}"))?;
     fs::write(&temp_path, content)
         .map_err(|error| format!("无法写入临时状态文件 {}：{error}", temp_path.display()))?;
     fs::rename(&temp_path, &path)
         .map_err(|error| format!("无法替换状态文件 {}：{error}", path.display()))
+}
+
+fn settings_config_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(SETTINGS_FILE_NAME)
+}
+
+fn read_settings_config(data_dir: &Path) -> Result<GlobalSettings, String> {
+    let path = settings_config_path(data_dir);
+    let content = fs::read_to_string(&path)
+        .map_err(|error| format!("无法读取应用配置文件 {}：{error}", path.display()))?;
+    let value = toml::from_str::<serde_json::Value>(&content)
+        .map_err(|error| format!("应用配置文件格式无效 {}：{error}", path.display()))?;
+    merge_settings_with_defaults(value)
+}
+
+fn write_settings_config(data_dir: &Path, settings: &GlobalSettings) -> Result<(), String> {
+    let path = settings_config_path(data_dir);
+    let temp_path = data_dir.join(format!("{SETTINGS_FILE_NAME}.tmp"));
+    let content =
+        toml::to_string_pretty(settings).map_err(|error| format!("无法序列化应用配置：{error}"))?;
+    fs::write(&temp_path, content)
+        .map_err(|error| format!("无法写入临时配置文件 {}：{error}", temp_path.display()))?;
+    fs::rename(&temp_path, &path)
+        .map_err(|error| format!("无法替换配置文件 {}：{error}", path.display()))
+}
+
+fn merge_settings_with_defaults(incoming: serde_json::Value) -> Result<GlobalSettings, String> {
+    let mut merged = serde_json::to_value(GlobalSettings::default())
+        .map_err(|error| format!("无法生成默认应用配置：{error}"))?;
+
+    if let (Some(base), Some(next)) = (merged.as_object_mut(), incoming.as_object()) {
+        for (key, value) in next {
+            base.insert(key.clone(), value.clone());
+        }
+    }
+
+    serde_json::from_value(merged).map_err(|error| format!("应用配置字段无效：{error}"))
+}
+
+fn migrate_manager_data_secrets(data: &mut ManagerData) -> Result<bool, String> {
+    web_auth::migrate_web_admin_password_hash(&mut data.settings.web_admin_password)
 }
 
 fn validate_instance_payload(payload: &AddInstancePayload) -> Result<(), String> {
@@ -1171,6 +1359,147 @@ mod tests {
             processes: Arc::new(Mutex::new(HashMap::new())),
             update_cancels: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn test_instance(id: &str, status: ServerStatus) -> ServerInstance {
+        ServerInstance {
+            id: id.to_string(),
+            name: format!("实例-{id}"),
+            map: "The Island".to_string(),
+            map_code: "TheIsland_WP".to_string(),
+            mode: "PvE".to_string(),
+            status,
+            game_port: 7777,
+            query_port: 27015,
+            players: 3,
+            max_players: 30,
+            install_path: format!("D:\\ASA-Server\\{id}"),
+            rcon_port: 32330,
+            cluster_id: "cluster".to_string(),
+            description: String::new(),
+            pid: Some(12_345),
+            last_started_at: None,
+            last_stopped_at: None,
+            server_version: String::new(),
+            version_state: "已安装/已更新".to_string(),
+            last_error: Some("旧错误".to_string()),
+            skip_auto_update_on_start_once: false,
+        }
+    }
+
+    #[test]
+    fn 启动时恢复中断的安装更新状态() {
+        let mut data = ManagerData::default();
+        data.instances
+            .push(test_instance("asa-stale-update", ServerStatus::Updating));
+
+        assert!(recover_stale_update_statuses(&mut data));
+
+        let instance = data.instances.first().expect("恢复后的实例存在");
+        assert_eq!(instance.status, ServerStatus::Stopped);
+        assert_eq!(instance.pid, None);
+        assert_eq!(instance.players, 0);
+        assert_eq!(instance.last_error, None);
+        assert!(instance.skip_auto_update_on_start_once);
+        assert!(instance.last_stopped_at.is_some());
+        assert_eq!(data.logs.len(), 1);
+        assert_eq!(data.logs[0].instance, "实例-asa-stale-update");
+        assert_eq!(data.logs[0].level, "warn");
+        assert!(data.logs[0].message.contains("已自动恢复为已停止"));
+    }
+
+    #[test]
+    fn 启动时不会误改正常停止状态() {
+        let mut data = ManagerData::default();
+        data.instances
+            .push(test_instance("asa-stopped", ServerStatus::Stopped));
+
+        assert!(!recover_stale_update_statuses(&mut data));
+        assert_eq!(data.instances[0].status, ServerStatus::Stopped);
+        assert!(!data.instances[0].skip_auto_update_on_start_once);
+        assert!(data.logs.is_empty());
+    }
+
+    #[test]
+    fn 可清除启动自动更新一次性跳过标记() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let runtime = test_runtime(temp.path());
+        let mut instance = test_instance("asa-recovered", ServerStatus::Stopped);
+        instance.skip_auto_update_on_start_once = true;
+        runtime.upsert_instance(instance).expect("写入实例");
+
+        let updated = runtime
+            .clear_startup_auto_update_skip_flags(&["asa-recovered".to_string()])
+            .expect("清除跳过标记");
+
+        assert_eq!(updated.len(), 1);
+        assert!(!updated[0].skip_auto_update_on_start_once);
+        assert!(
+            !runtime
+                .get_instance("asa-recovered")
+                .expect("读取实例")
+                .skip_auto_update_on_start_once
+        );
+    }
+
+    #[test]
+    fn 自动迁移_web_管理员明文密码为哈希() {
+        let mut data = ManagerData::default();
+        data.settings.web_admin_username = "admin".to_string();
+        data.settings.web_admin_password = "plain-secret".to_string();
+
+        assert!(migrate_manager_data_secrets(&mut data).expect("迁移明文 Web 密码"));
+        assert_ne!(data.settings.web_admin_password, "plain-secret");
+        assert!(web_auth::is_web_admin_password_hash(
+            &data.settings.web_admin_password
+        ));
+        assert!(
+            web_auth::verify_web_admin_password("plain-secret", &data.settings.web_admin_password)
+                .expect("校验迁移后的 Web 密码")
+        );
+    }
+
+    #[test]
+    fn 全局设置写入_config_toml_且状态文件不再重复保存() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let mut data = ManagerData::default();
+        data.settings.theme = "light".to_string();
+        data.settings.language = "en-US".to_string();
+
+        write_data(temp.path(), &data).expect("写入拆分后的管理器数据");
+
+        let config_toml =
+            fs::read_to_string(temp.path().join(SETTINGS_FILE_NAME)).expect("读取 config.toml");
+        assert!(config_toml.contains("theme = \"light\""));
+        assert!(config_toml.contains("language = \"en-US\""));
+
+        let state_json =
+            fs::read_to_string(temp.path().join(STATE_FILE_NAME)).expect("读取状态文件");
+        assert!(!state_json.contains("\"settings\""));
+
+        let loaded = read_data(temp.path()).expect("重新读取拆分后的管理器数据");
+        assert_eq!(loaded.settings.theme, "light");
+        assert_eq!(loaded.settings.language, "en-US");
+    }
+
+    #[test]
+    fn 旧状态文件中的_settings_可迁移到_config_toml() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let mut legacy = ManagerData::default();
+        legacy.settings.theme = "light".to_string();
+        fs::write(
+            temp.path().join(STATE_FILE_NAME),
+            serde_json::to_string_pretty(&legacy).expect("序列化旧状态文件"),
+        )
+        .expect("写入旧状态文件");
+
+        let loaded = read_data(temp.path()).expect("读取旧状态文件");
+        assert_eq!(loaded.settings.theme, "light");
+
+        write_data(temp.path(), &loaded).expect("写入迁移后的配置文件");
+        let config_toml =
+            fs::read_to_string(temp.path().join(SETTINGS_FILE_NAME)).expect("读取 config.toml");
+        assert!(config_toml.contains("theme = \"light\""));
     }
 
     fn available_test_ports() -> (u16, u16, u16) {

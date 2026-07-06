@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 interface Window {
+  __ASA_RUNTIME__?: 'desktop' | 'web'
   __TAURI_INTERNALS__?: unknown
 }
 

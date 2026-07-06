@@ -1,5 +1,24 @@
 export type ServerStatus = 'running' | 'stopped' | 'stopping' | 'starting' | 'updating' | 'backingUp' | 'error'
 
+export interface WebIpWhitelistEntry {
+  value: string
+  group: string
+  note: string
+}
+
+export interface WebSecurityBanRecord {
+  ip: string
+  reason: string
+  source: 'login' | 'ua' | 'body' | 'path' | 'rate' | 'security' | string
+  bannedAtMs: number
+  remainingSeconds: number
+}
+
+export interface WebSecurityUnbanResult {
+  ip: string
+  existed: boolean
+}
+
 export interface GlobalSettings {
   steamCmdPath: string
   serverStoragePath: string
@@ -12,9 +31,22 @@ export interface GlobalSettings {
   autoUpdateOnStart: boolean
   autoRestartOnCrash: boolean
   maxBackupRetention: number
+  webManagementEnabled: boolean
   webServerPort: number
   webAdminUsername: string
   webAdminPassword: string
+  webAdminPasswordConfigured: boolean
+  webReverseProxyEnabled: boolean
+  webReverseProxyDomain: string
+  webReverseProxyPort: number
+  webReverseProxyOpenRestyPath: string
+  webLoginFailureBanThreshold: number
+  webLoginFailureBanSeconds: number
+  webCaptchaCharset: string
+  webCaptchaFontSize: number
+  webCaptchaNoisePoints: number
+  webCaptchaLength: number
+  webIpWhitelist: WebIpWhitelistEntry[]
 }
 
 export interface SteamCmdCheck {
@@ -58,6 +90,7 @@ export interface ServerInstance {
   serverVersion: string
   versionState: string
   lastError: string | null
+  skipAutoUpdateOnStartOnce?: boolean
 }
 
 export interface AddInstancePayload {

@@ -18,12 +18,27 @@ import type {
   SteamCmdCheck,
   SteamCmdInstallResult,
   SteamCmdProgress,
+  WebSecurityBanRecord,
+  WebSecurityUnbanResult,
 } from './types'
 
 const WEB_AUTH_TOKEN_KEY = 'asa-web-auth-token'
 
 export interface WebAuthStatus {
   configured: boolean
+  captchaRequired: boolean
+}
+
+export interface WebCaptcha {
+  required: boolean
+  token: string
+  imageSvg: string
+  expiresInSeconds: number
+}
+
+export interface WebCaptchaInput {
+  token: string
+  answer: string
 }
 
 export function getWebAuthToken() {
@@ -59,14 +74,27 @@ export async function getWebAuthStatus() {
   return parseWebApiPayload<WebAuthStatus>(response, '无法读取 Web 鉴权状态')
 }
 
-export async function loginWeb(username: string, password: string) {
+export async function getWebCaptcha() {
+  const response = await fetch(`${getWebApiBaseUrl()}/api/auth/captcha`, {
+    credentials: 'same-origin',
+  })
+  return parseWebApiPayload<WebCaptcha>(response, '无法刷新 Web 登录验证码')
+}
+
+export async function loginWeb(username: string, password: string, captcha?: WebCaptchaInput) {
   const response = await fetch(`${getWebApiBaseUrl()}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    credentials: 'same-origin',
+    body: JSON.stringify({
+      username,
+      password,
+      captchaToken: captcha?.token,
+      captchaAnswer: captcha?.answer,
+    }),
   })
   const data = await parseWebApiPayload<{ token: string }>(response, 'Web 登录失败')
-  setWebAuthToken(data.token)
+  clearWebAuthToken()
   return data
 }
 
@@ -76,7 +104,13 @@ export async function logoutWeb() {
     if (token) {
       await fetch(`${getWebApiBaseUrl()}/api/auth/logout`, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { Authorization: `Bearer ${token}` },
+      })
+    } else {
+      await fetch(`${getWebApiBaseUrl()}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'same-origin',
       })
     }
   } finally {
@@ -93,6 +127,7 @@ async function webInvoke<T>(command: string, args: Record<string, unknown>) {
   const token = getWebAuthToken()
   const response = await fetch(`${getWebApiBaseUrl()}/api/invoke`, {
     method: 'POST',
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -107,6 +142,10 @@ export const getSettings = () => invokeCommand<GlobalSettings>('get_settings')
 
 export const saveSettings = (settings: GlobalSettings) => invokeCommand<GlobalSettings>('save_settings', { settings })
 
+export const listWebSecurityBans = () => invokeCommand<WebSecurityBanRecord[]>('list_web_security_bans')
+
+export const unbanWebSecurityIp = (ip: string) => invokeCommand<WebSecurityUnbanResult>('unban_web_security_ip', { ip })
+
 export const checkSteamCmd = (path: string) => invokeCommand<SteamCmdCheck>('check_steamcmd', { path })
 
 export const installSteamCmd = (parentPath: string, onProgress: (progress: SteamCmdProgress) => void) => {
@@ -119,6 +158,9 @@ export const installSteamCmd = (parentPath: string, onProgress: (progress: Steam
 }
 
 export const listInstances = () => invokeCommand<ServerInstance[]>('list_instances')
+
+export const clearStartupAutoUpdateSkipFlags = (instanceIds: string[]) =>
+  invokeCommand<ServerInstance[]>('clear_startup_auto_update_skip_flags', { instanceIds })
 
 export const checkInstancePort = (port: number, portKind: InstancePortKind) =>
   invokeCommand<PortCheckResult>('check_instance_port', { port, portKind })

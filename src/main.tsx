@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useMemo, useState } from 'react'
+import { StrictMode, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { setTheme as setTauriAppTheme } from '@tauri-apps/api/app'
 import { ConfigProvider, theme } from 'antd'
@@ -6,12 +6,13 @@ import enUS from 'antd/locale/en_US'
 import zhCN from 'antd/locale/zh_CN'
 import AddInstanceWindow from './AddInstanceWindow'
 import App from './App'
-import { clearWebAuthToken, getSettings, getWebAuthToken } from './backendApi'
+import { clearWebAuthToken, getSettings } from './backendApi'
 import LoginPage from './LoginPage'
 import RconWindow from './RconWindow'
 import SettingsWindow from './SettingsWindow'
 import { loadGlobalSettings, loadGlobalSettingsFromBackend, subscribeGlobalSettings } from './globalSettings'
 import { isTauriRuntime } from './runtime'
+import { resolveThemeMode, systemPrefersDark, themeMetaColor } from './themePreference'
 import './styles.css'
 import type { GlobalSettings } from './types'
 
@@ -21,15 +22,6 @@ const isRconWindow = new URLSearchParams(window.location.search).get('window') =
 document.documentElement.classList.toggle('settings-document', isSettingsWindow)
 document.documentElement.classList.toggle('child-window-document', isSettingsWindow || isAddInstanceWindow || isRconWindow)
 
-function systemPrefersDark() {
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true
-}
-
-function resolveThemeMode(settings: GlobalSettings, systemDark: boolean) {
-  if (settings.theme === 'system') return systemDark ? 'dark' : 'light'
-  return settings.theme
-}
-
 function applyDocumentTheme(settings: GlobalSettings, themeMode: 'dark' | 'light') {
   document.documentElement.lang = settings.language
   document.documentElement.dataset.theme = settings.theme
@@ -37,6 +29,7 @@ function applyDocumentTheme(settings: GlobalSettings, themeMode: 'dark' | 'light
   document.documentElement.style.colorScheme = themeMode
   document.documentElement.classList.toggle('theme-light', themeMode === 'light')
   document.documentElement.classList.toggle('theme-dark', themeMode === 'dark')
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', themeMetaColor(themeMode))
 }
 
 function applyNativeThemePreference(themePreference: GlobalSettings['theme']) {
@@ -50,9 +43,9 @@ function applyNativeThemePreference(themePreference: GlobalSettings['theme']) {
 function Root() {
   const [settings, setSettings] = useState<GlobalSettings>(loadGlobalSettings)
   const [systemDark, setSystemDark] = useState(systemPrefersDark)
-  const [webAuthenticated, setWebAuthenticated] = useState(() => isTauriRuntime() || Boolean(getWebAuthToken()))
-  const [checkingWebAuth, setCheckingWebAuth] = useState(!isTauriRuntime() && Boolean(getWebAuthToken()))
-  const themeMode = resolveThemeMode(settings, systemDark)
+  const [webAuthenticated, setWebAuthenticated] = useState(() => isTauriRuntime())
+  const [checkingWebAuth, setCheckingWebAuth] = useState(!isTauriRuntime())
+  const themeMode = resolveThemeMode(settings.theme, systemDark)
   const needsWebLogin = !isTauriRuntime() && (!webAuthenticated || checkingWebAuth)
 
   useEffect(() => {
@@ -77,7 +70,7 @@ function Root() {
     return () => media.removeListener(handleChange)
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     applyDocumentTheme(settings, themeMode)
   }, [settings, themeMode])
 
@@ -91,7 +84,7 @@ function Root() {
   }, [needsWebLogin])
 
   useEffect(() => {
-    if (isTauriRuntime() || !getWebAuthToken()) return
+    if (isTauriRuntime()) return
     let disposed = false
     void getSettings()
       .then(() => {

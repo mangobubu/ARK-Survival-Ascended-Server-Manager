@@ -1,4 +1,7 @@
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 fn main() {
     generate_embedded_web_assets();
@@ -8,7 +11,8 @@ fn main() {
 fn generate_embedded_web_assets() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR 未设置"));
     let output = out_dir.join("web_assets.rs");
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR 未设置"));
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR 未设置"));
     let dist_dir = manifest_dir.join("..").join("dist");
 
     let mut entries = Vec::new();
@@ -53,7 +57,11 @@ fn collect_files(root: &Path, current: &Path, entries: &mut Vec<(String, PathBuf
 }
 
 fn content_type_for(path: &str) -> &'static str {
-    match Path::new(path).extension().and_then(|value| value.to_str()).unwrap_or_default() {
+    match Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+    {
         "html" => "text/html; charset=utf-8",
         "js" => "text/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",

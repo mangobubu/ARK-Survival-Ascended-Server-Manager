@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
-import { LockOutlined, SafetyCertificateOutlined, UserOutlined } from '@ant-design/icons'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { LockOutlined, ReloadOutlined, SafetyCertificateOutlined, UserOutlined } from '@ant-design/icons'
 import { Alert, Button, Form, Input, Typography, message } from 'antd'
 import {
+  getWebCaptcha,
   getWebAuthStatus,
   loginWeb,
+  type WebCaptcha,
   type WebAuthStatus,
 } from './backendApi'
 
@@ -16,32 +18,79 @@ interface LoginPageProps {
 interface LoginFormValues {
   username: string
   password: string
+  captchaAnswer?: string
 }
 
 export default function LoginPage({ onAuthenticated }: LoginPageProps) {
   const [form] = Form.useForm<LoginFormValues>()
   const [messageApi, contextHolder] = message.useMessage()
   const [authStatus, setAuthStatus] = useState<WebAuthStatus | null>(null)
+  const [captcha, setCaptcha] = useState<WebCaptcha | null>(null)
   const [loadingStatus, setLoadingStatus] = useState(true)
+  const [loadingCaptcha, setLoadingCaptcha] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const captchaRequired = authStatus?.captchaRequired === true
+  const captchaImageUrl = useMemo(() => {
+    if (!captcha?.imageSvg) return ''
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(captcha.imageSvg)}`
+  }, [captcha])
+
+  const refreshCaptcha = useCallback(async () => {
+    setLoadingCaptcha(true)
+    try {
+      const next = await getWebCaptcha()
+      setCaptcha(next.required ? next : null)
+      form.setFieldValue('captchaAnswer', '')
+    } catch (error) {
+      messageApi.error(`无法刷新验证码：${String(error)}`)
+      setCaptcha(null)
+    } finally {
+      setLoadingCaptcha(false)
+    }
+  }, [form, messageApi])
+
+  const refreshAuthStatus = useCallback(async () => {
+    const status = await getWebAuthStatus()
+    setAuthStatus(status)
+    if (!status.captchaRequired) {
+      setCaptcha(null)
+      form.setFieldValue('captchaAnswer', '')
+    }
+    return status
+  }, [form])
 
   useEffect(() => {
-    void getWebAuthStatus()
-      .then(setAuthStatus)
+    void refreshAuthStatus()
       .catch((error) => {
         messageApi.error(`无法读取 Web 登录配置：${String(error)}`)
       })
       .finally(() => setLoadingStatus(false))
-  }, [messageApi])
+  }, [messageApi, refreshAuthStatus])
+
+  useEffect(() => {
+    if (!captchaRequired || loadingStatus || captcha) return
+    void refreshCaptcha()
+  }, [captcha, captchaRequired, loadingStatus, refreshCaptcha])
 
   const handleFinish = async (values: LoginFormValues) => {
     setSubmitting(true)
     try {
-      await loginWeb(values.username, values.password)
+      await loginWeb(
+        values.username,
+        values.password,
+        captchaRequired
+          ? {
+              token: captcha?.token ?? '',
+              answer: values.captchaAnswer ?? '',
+            }
+          : undefined,
+      )
       messageApi.success('登录成功，正在进入管理控制台')
       onAuthenticated()
     } catch (error) {
       messageApi.error(String(error instanceof Error ? error.message : error))
+      const status = await refreshAuthStatus().catch(() => null)
+      if (status?.captchaRequired) await refreshCaptcha()
     } finally {
       setSubmitting(false)
     }
@@ -121,12 +170,51 @@ export default function LoginPage({ onAuthenticated }: LoginPageProps) {
               disabled={loadingStatus || authStatus?.configured === false}
             />
           </Form.Item>
+          {captchaRequired && (
+            <div className="web-login-captcha">
+              <div className="web-login-captcha__head">
+                <div>
+                  <strong>安全验证码</strong>
+                  <span>首次登录失败后一小时内，需要输入图中的字符串验证码。</span>
+                </div>
+                <Button
+                  aria-label="刷新验证码"
+                  icon={<ReloadOutlined />}
+                  loading={loadingCaptcha}
+                  onClick={() => void refreshCaptcha()}
+                  size="small"
+                >
+                  换一张
+                </Button>
+              </div>
+              <div className="web-login-captcha__body">
+                <div className="web-login-captcha__image">
+                  {captchaImageUrl ? (
+                    <img src={captchaImageUrl} alt="字符串验证码" />
+                  ) : (
+                    <span>{loadingCaptcha ? '正在生成验证码...' : '请刷新验证码'}</span>
+                  )}
+                </div>
+                <Form.Item
+                  label="验证码"
+                  name="captchaAnswer"
+                  rules={[{ required: true, message: '请输入图中的字符串验证码' }]}
+                >
+                  <Input
+                    autoComplete="one-time-code"
+                    disabled={loadingStatus || loadingCaptcha || authStatus?.configured === false}
+                    placeholder="输入验证码"
+                  />
+                </Form.Item>
+              </div>
+            </div>
+          )}
           <Button
             block
             className="web-login-submit"
             htmlType="submit"
             icon={<SafetyCertificateOutlined />}
-            loading={loadingStatus || submitting}
+            loading={loadingStatus || loadingCaptcha || submitting}
             type="primary"
             disabled={authStatus?.configured === false}
           >

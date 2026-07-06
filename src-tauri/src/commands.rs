@@ -1,17 +1,18 @@
 use crate::{
     app_state::{AppRuntime, normalize_required_rcon_config, now_millis},
-    ark_config, backup, import_export, instance_config_import, steamcmd, storage, window_controls,
-    sync_events::{
-        ADD_INSTANCE_CREATED_EVENT, INSTANCE_CONFIG_CHANGED_EVENT, INSTANCE_DELETED_EVENT,
-        INSTANCE_STATUS_EVENT, INSTANCES_CHANGED_EVENT, JOB_PROGRESS_EVENT, LOG_LINE_EVENT,
-        LOGS_CLEARED_EVENT, LOGS_RESET_EVENT, SETTINGS_CHANGED_EVENT,
-    },
+    ark_config, backup, import_export, instance_config_import,
     models::{
         ASA_DEDICATED_SERVER_APP_ID, AddInstancePayload, BackupItem, ExportResult, GlobalSettings,
         ImportResult, ImportedServerConfigPreview, JobProgress, LogLine, LogSource, ModItem,
         PortCheckResult, ServerInstance, ServerLogKind, ServerStatus, WindowCloseBehavior,
     },
-    rcon,
+    rcon, reverse_proxy, steamcmd, storage,
+    sync_events::{
+        ADD_INSTANCE_CREATED_EVENT, INSTANCE_CONFIG_CHANGED_EVENT, INSTANCE_DELETED_EVENT,
+        INSTANCE_STATUS_EVENT, INSTANCES_CHANGED_EVENT, JOB_PROGRESS_EVENT, LOG_LINE_EVENT,
+        LOGS_CLEARED_EVENT, LOGS_RESET_EVENT, SETTINGS_CHANGED_EVENT,
+    },
+    web_auth, web_server, window_controls,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -145,8 +146,8 @@ impl ProcessTransferCounters {
 }
 
 #[tauri::command]
-pub fn get_settings(runtime: State<'_, AppRuntime>) -> Result<GlobalSettings, String> {
-    runtime.settings()
+pub fn get_settings(runtime: State<'_, AppRuntime>) -> Result<Value, String> {
+    public_settings(runtime.settings()?)
 }
 
 #[tauri::command]
@@ -154,17 +155,51 @@ pub fn save_settings(
     app: AppHandle,
     runtime: State<'_, AppRuntime>,
     settings: GlobalSettings,
-) -> Result<GlobalSettings, String> {
+) -> Result<Value, String> {
+    let settings = merge_settings_update(runtime.inner(), settings)?;
     validate_settings(&settings)?;
     let saved = runtime.save_settings(settings)?;
     publish_settings_changed(&app, saved.clone())?;
-    Ok(saved)
+    public_settings(saved)
+}
+
+#[tauri::command]
+pub fn list_web_security_bans(app: AppHandle) -> Result<Value, String> {
+    to_json(reverse_proxy::list_security_bans_from_app(&app)?)
+}
+
+#[tauri::command]
+pub fn unban_web_security_ip(app: AppHandle, ip: String) -> Result<Value, String> {
+    to_json(reverse_proxy::unban_security_ip_from_app(&app, &ip)?)
 }
 
 #[tauri::command]
 pub fn list_instances(runtime: State<'_, AppRuntime>) -> Result<Vec<ServerInstance>, String> {
     Ok(runtime
         .list_instances()?
+        .into_iter()
+        .map(with_current_server_version)
+        .collect())
+}
+
+#[tauri::command]
+pub fn clear_startup_auto_update_skip_flags(
+    app: AppHandle,
+    runtime: State<'_, AppRuntime>,
+    instance_ids: Vec<String>,
+) -> Result<Vec<ServerInstance>, String> {
+    let updated = runtime.clear_startup_auto_update_skip_flags(&instance_ids)?;
+    for instance in &updated {
+        publish_sync_event_best_effort(
+            &app,
+            INSTANCE_STATUS_EVENT,
+            with_current_server_version(instance.clone()),
+        );
+    }
+    if !updated.is_empty() {
+        publish_instances_changed(&app);
+    }
+    Ok(updated
         .into_iter()
         .map(with_current_server_version)
         .collect())
@@ -202,14 +237,20 @@ pub async fn handle_web_invoke(
             )
             .await?,
         ),
-        "get_settings" => to_json(runtime.settings()?),
+        "get_settings" => public_settings(runtime.settings()?),
         "save_settings" => {
             let settings: GlobalSettings = required_arg(&args, "settings")?;
+            let settings = merge_settings_update(&runtime, settings)?;
             validate_settings(&settings)?;
             let saved = runtime.save_settings(settings)?;
             publish_settings_changed(&app, saved.clone())?;
-            to_json(saved)
+            public_settings(saved)
         }
+        "list_web_security_bans" => to_json(reverse_proxy::list_security_bans_from_app(&app)?),
+        "unban_web_security_ip" => to_json(reverse_proxy::unban_security_ip_from_app(
+            &app,
+            &required_arg::<String>(&args, "ip")?,
+        )?),
         "list_instances" => to_json(
             runtime
                 .list_instances()?
@@ -217,6 +258,26 @@ pub async fn handle_web_invoke(
                 .map(with_current_server_version)
                 .collect::<Vec<_>>(),
         ),
+        "clear_startup_auto_update_skip_flags" => {
+            let instance_ids: Vec<String> = required_arg(&args, "instanceIds")?;
+            let updated = runtime.clear_startup_auto_update_skip_flags(&instance_ids)?;
+            for instance in &updated {
+                publish_sync_event_best_effort(
+                    &app,
+                    INSTANCE_STATUS_EVENT,
+                    with_current_server_version(instance.clone()),
+                );
+            }
+            if !updated.is_empty() {
+                publish_instances_changed(&app);
+            }
+            to_json(
+                updated
+                    .into_iter()
+                    .map(with_current_server_version)
+                    .collect::<Vec<_>>(),
+            )
+        }
         "check_instance_port" => to_json(runtime.check_instance_port(
             required_arg(&args, "port")?,
             &required_arg::<String>(&args, "portKind")?,
@@ -236,19 +297,17 @@ pub async fn handle_web_invoke(
             publish_instances_changed(&app);
             to_json(instance)
         }
-        "read_server_directory_config" => to_json(
-            instance_config_import::read_server_directory_config(Path::new(
-                &required_arg::<String>(&args, "path")?,
-            ))?,
-        ),
-        "get_instance_config" => to_json(runtime.get_config(&required_arg::<String>(
-            &args,
-            "instanceId",
-        )?)?),
-        "get_instance_mods" => to_json(runtime.get_mods(&required_arg::<String>(
-            &args,
-            "instanceId",
-        )?)?),
+        "read_server_directory_config" => {
+            to_json(instance_config_import::read_server_directory_config(
+                Path::new(&required_arg::<String>(&args, "path")?),
+            )?)
+        }
+        "get_instance_config" => {
+            to_json(runtime.get_config(&required_arg::<String>(&args, "instanceId")?)?)
+        }
+        "get_instance_mods" => {
+            to_json(runtime.get_mods(&required_arg::<String>(&args, "instanceId")?)?)
+        }
         "save_instance_config" => {
             let instance_id: String = required_arg(&args, "instanceId")?;
             let config: Value = required_arg(&args, "config")?;
@@ -288,32 +347,30 @@ pub async fn handle_web_invoke(
             )
             .await?,
         ),
-        "start_instance" => to_json(
-            start_instance_inner(app, runtime, required_arg(&args, "instanceId")?).await?,
-        ),
+        "start_instance" => {
+            to_json(start_instance_inner(app, runtime, required_arg(&args, "instanceId")?).await?)
+        }
         "stop_instance" => to_json(stop_instance_inner(
             app,
             runtime,
             required_arg(&args, "instanceId")?,
         )?),
-        "restart_instance" => to_json(
-            restart_instance_inner(app, runtime, required_arg(&args, "instanceId")?).await?,
-        ),
+        "restart_instance" => {
+            to_json(restart_instance_inner(app, runtime, required_arg(&args, "instanceId")?).await?)
+        }
         "refresh_instance_status" => {
             let instance_id: String = required_arg(&args, "instanceId")?;
             to_json(refresh_status_inner(&app, &runtime, &instance_id).await?)
         }
-        "execute_rcon_command" => {
-            to_json(
-                execute_rcon_command_inner(
-                    &app,
-                    &runtime,
-                    required_arg(&args, "instanceId")?,
-                    required_arg(&args, "command")?,
-                )
-                .await?,
+        "execute_rcon_command" => to_json(
+            execute_rcon_command_inner(
+                &app,
+                &runtime,
+                required_arg(&args, "instanceId")?,
+                required_arg(&args, "command")?,
             )
-        }
+            .await?,
+        ),
         "query_logs" => to_json(runtime.query_logs(optional_arg(&args, "limit")?)?),
         "clear_logs" => {
             runtime.clear_logs()?;
@@ -357,7 +414,11 @@ pub async fn handle_web_invoke(
             let backup_path: String = required_arg(&args, "backupPath")?;
             let instance = runtime.get_instance(&instance_id)?;
             backup::restore_instance_backup(&instance, Path::new(&backup_path))?;
-            runtime.add_log(&instance.name, "warn", &format!("已恢复备份：{backup_path}"))?;
+            runtime.add_log(
+                &instance.name,
+                "warn",
+                &format!("已恢复备份：{backup_path}"),
+            )?;
             Ok(Value::Null)
         }
         "export_instance_config" => to_json(import_export::export_instances(
@@ -376,10 +437,7 @@ pub async fn handle_web_invoke(
             to_json(result)
         }
         "delete_instance" => {
-            let removed = runtime.delete_instance(&required_arg::<String>(
-                &args,
-                "instanceId",
-            )?)?;
+            let removed = runtime.delete_instance(&required_arg::<String>(&args, "instanceId")?)?;
             publish_sync_event_best_effort(&app, INSTANCE_DELETED_EVENT, removed.clone());
             publish_instances_changed(&app);
             to_json(removed)
@@ -426,6 +484,47 @@ fn optional_arg<T: DeserializeOwned>(args: &Value, name: &str) -> Result<Option<
     }
 }
 
+fn merge_settings_update(
+    runtime: &AppRuntime,
+    settings: GlobalSettings,
+) -> Result<GlobalSettings, String> {
+    let current = runtime.settings()?;
+    prepare_settings_for_save(&current, settings)
+}
+
+fn prepare_settings_for_save(
+    current: &GlobalSettings,
+    mut settings: GlobalSettings,
+) -> Result<GlobalSettings, String> {
+    if settings.web_admin_password.is_empty() && !settings.web_admin_username.trim().is_empty() {
+        settings.web_admin_password = current.web_admin_password.clone();
+    } else if !settings.web_admin_password.is_empty() {
+        if settings.web_admin_password.len() > 128 {
+            return Err("Web 管理员密码不能超过 128 个字符".to_string());
+        }
+        settings.web_admin_password =
+            web_auth::hash_web_admin_password(&settings.web_admin_password)?;
+    }
+    Ok(settings)
+}
+
+fn public_settings(mut settings: GlobalSettings) -> Result<Value, String> {
+    let web_admin_password_configured =
+        !settings.web_admin_username.trim().is_empty() && !settings.web_admin_password.is_empty();
+    settings.web_admin_password.clear();
+
+    let mut value =
+        serde_json::to_value(settings).map_err(|error| format!("序列化全局设置失败：{error}"))?;
+    let Value::Object(map) = &mut value else {
+        return Err("序列化全局设置失败：结果不是对象".to_string());
+    };
+    map.insert(
+        "webAdminPasswordConfigured".to_string(),
+        json!(web_admin_password_configured),
+    );
+    Ok(value)
+}
+
 fn to_json<T: Serialize>(value: T) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|error| format!("序列化 Web API 响应失败：{error}"))
 }
@@ -451,7 +550,10 @@ fn publish_instances_changed(app: &AppHandle) {
 }
 
 fn publish_settings_changed(app: &AppHandle, settings: GlobalSettings) -> Result<(), String> {
-    publish_sync_event(app, SETTINGS_CHANGED_EVENT, settings)
+    web_server::apply_settings_from_app(app, &settings)?;
+    reverse_proxy::apply_settings_from_app(app, &settings)?;
+    window_controls::handle_settings_changed(app, &settings);
+    publish_sync_event(app, SETTINGS_CHANGED_EVENT, public_settings(settings)?)
 }
 
 fn publish_instance_config_changed(
@@ -652,6 +754,7 @@ async fn install_or_update_instance_inner(
     let update_cancel = runtime.begin_update(&instance.id)?;
 
     emit_progress(
+        &app,
         &progress,
         &instance.id,
         "preparing",
@@ -683,6 +786,7 @@ async fn install_or_update_instance_inner(
     match output {
         Ok(detail) => {
             emit_progress(
+                &app,
                 &progress,
                 &instance.id,
                 "completed",
@@ -1114,6 +1218,7 @@ async fn run_steamcmd_update_with_retry(
                     "SteamCMD 配置尚未就绪，正在等待后自动重试安装/更新",
                 )?;
                 emit_progress(
+                    app,
                     progress,
                     &instance.id,
                     "preparing",
@@ -1141,6 +1246,7 @@ async fn run_steamcmd_update(
     cancel: Arc<AtomicBool>,
 ) -> Result<String, String> {
     emit_progress(
+        app,
         progress,
         &instance.id,
         "running",
@@ -1282,6 +1388,7 @@ async fn run_steamcmd_update(
         }
         let transfer = transfer_snapshot(&progress_sink);
         emit_progress_with_transfer(
+            app,
             progress,
             &instance.id,
             "verifying",
@@ -1311,7 +1418,8 @@ async fn start_instance_inner(
     }
     let config = normalize_required_rcon_config(runtime.get_config(&instance_id)?)?;
     let mods = runtime.get_mods(&instance_id)?;
-    let instance = save_config_for_runtime(&app, &runtime, &instance_id, config.clone(), mods.clone())?;
+    let instance =
+        save_config_for_runtime(&app, &runtime, &instance_id, config.clone(), mods.clone())?;
     let executable = ark_config::server_executable(&instance).ok_or_else(|| {
         format!(
             "未找到 ASA 服务端可执行文件，请先安装/更新实例：{}",
@@ -2438,6 +2546,7 @@ fn emit_server_log(
 }
 
 fn emit_progress(
+    app: &AppHandle,
     channel: &Channel<JobProgress>,
     instance_id: &str,
     phase: &str,
@@ -2446,6 +2555,7 @@ fn emit_progress(
     detail: Option<String>,
 ) -> Result<(), String> {
     emit_progress_with_transfer(
+        app,
         channel,
         instance_id,
         phase,
@@ -2462,6 +2572,7 @@ fn emit_progress(
 }
 
 fn emit_progress_with_transfer(
+    app: &AppHandle,
     channel: &Channel<JobProgress>,
     instance_id: &str,
     phase: &str,
@@ -2470,19 +2581,23 @@ fn emit_progress_with_transfer(
     detail: Option<String>,
     transfer: TransferSnapshot,
 ) -> Result<(), String> {
+    let payload = JobProgress {
+        job_id: format!("job-{}", now_millis()),
+        instance_id: Some(instance_id.to_string()),
+        phase: phase.to_string(),
+        percent,
+        message: message.to_string(),
+        detail,
+        downloaded_bytes: transfer.downloaded_bytes,
+        total_bytes: transfer.total_bytes,
+        bytes_per_second: transfer.bytes_per_second,
+    };
     channel
-        .send(JobProgress {
-            job_id: format!("job-{}", now_millis()),
-            instance_id: Some(instance_id.to_string()),
-            phase: phase.to_string(),
-            percent,
-            message: message.to_string(),
-            detail,
-            downloaded_bytes: transfer.downloaded_bytes,
-            total_bytes: transfer.total_bytes,
-            bytes_per_second: transfer.bytes_per_second,
-        })
+        .send(payload.clone())
         .map_err(|error| format!("发送任务进度失败：{error}"))
+        .map(|_| {
+            publish_sync_event_best_effort(app, JOB_PROGRESS_EVENT, payload);
+        })
 }
 
 fn validate_settings(settings: &GlobalSettings) -> Result<(), String> {
@@ -2529,6 +2644,27 @@ fn validate_settings(settings: &GlobalSettings) -> Result<(), String> {
     if settings.web_admin_username.trim().is_empty() && !settings.web_admin_password.is_empty() {
         return Err("设置 Web 管理员密码时，管理员账号不能为空".to_string());
     }
+    let web_captcha_visible_chars = settings
+        .web_captcha_charset
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .count();
+    if web_captcha_visible_chars < 2 {
+        return Err("Web 验证码字符池至少需要包含 2 个可见字符".to_string());
+    }
+    if settings.web_captcha_charset.chars().count() > 128 {
+        return Err("Web 验证码字符池不能超过 128 个字符".to_string());
+    }
+    if !(1..=12).contains(&settings.web_captcha_length) {
+        return Err("Web 验证码字符数量必须在 1-12 之间".to_string());
+    }
+    if !(18..=56).contains(&settings.web_captcha_font_size) {
+        return Err("Web 验证码字体大小必须在 18-56 之间".to_string());
+    }
+    if settings.web_captcha_noise_points > 120 {
+        return Err("Web 验证码杂点数量必须在 0-120 之间".to_string());
+    }
+    reverse_proxy::validate_settings(settings)?;
     Ok(())
 }
 
@@ -3364,6 +3500,76 @@ mod tests {
     use super::*;
 
     #[test]
+    fn public_settings_never_exposes_web_admin_password() {
+        let mut settings = GlobalSettings::default();
+        settings.web_admin_username = "admin".to_string();
+        settings.web_admin_password = "secret-password".to_string();
+
+        let payload = public_settings(settings).expect("生成脱敏设置");
+
+        assert_eq!(
+            payload.get("webAdminPassword").and_then(Value::as_str),
+            Some("")
+        );
+        assert_eq!(
+            payload
+                .get("webAdminPasswordConfigured")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn save_settings_hashes_new_web_admin_password() {
+        let current = GlobalSettings::default();
+        let mut incoming = current.clone();
+        incoming.web_admin_username = "admin".to_string();
+        incoming.web_admin_password = "new-secret".to_string();
+
+        let prepared = prepare_settings_for_save(&current, incoming).expect("准备保存设置");
+
+        assert_ne!(prepared.web_admin_password, "new-secret");
+        assert!(web_auth::is_web_admin_password_hash(
+            &prepared.web_admin_password
+        ));
+        assert!(
+            web_auth::verify_web_admin_password("new-secret", &prepared.web_admin_password)
+                .expect("校验新密码哈希")
+        );
+    }
+
+    #[test]
+    fn save_settings_blank_password_preserves_existing_hash() {
+        let mut current = GlobalSettings::default();
+        current.web_admin_username = "admin".to_string();
+        current.web_admin_password =
+            web_auth::hash_web_admin_password("old-secret").expect("生成旧密码哈希");
+        let mut incoming = current.clone();
+        incoming.web_admin_password.clear();
+
+        let prepared = prepare_settings_for_save(&current, incoming).expect("准备保存空密码设置");
+
+        assert_eq!(prepared.web_admin_password, current.web_admin_password);
+    }
+
+    #[test]
+    fn save_settings_empty_username_and_password_disables_web_auth() {
+        let mut current = GlobalSettings::default();
+        current.web_admin_username = "admin".to_string();
+        current.web_admin_password =
+            web_auth::hash_web_admin_password("old-secret").expect("生成旧密码哈希");
+        let mut incoming = current.clone();
+        incoming.web_admin_username.clear();
+        incoming.web_admin_password.clear();
+
+        let prepared =
+            prepare_settings_for_save(&current, incoming).expect("准备保存禁用 Web 鉴权设置");
+
+        assert!(prepared.web_admin_username.is_empty());
+        assert!(prepared.web_admin_password.is_empty());
+    }
+
+    #[test]
     fn listplayers_empty_response_counts_zero() {
         assert_eq!(parse_list_players_count(""), 0);
         assert_eq!(parse_list_players_count("No Players Connected"), 0);
@@ -3565,6 +3771,7 @@ mod tests {
             server_version: String::new(),
             version_state: "已安装".to_string(),
             last_error: None,
+            skip_auto_update_on_start_once: false,
         };
 
         let truncated_count = truncate_instance_game_log_files(&instance).expect("清空日志文件");

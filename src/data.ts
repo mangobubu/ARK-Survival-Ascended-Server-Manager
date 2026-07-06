@@ -12,9 +12,24 @@ export const defaultGlobalSettings: GlobalSettings = {
   autoUpdateOnStart: true,
   autoRestartOnCrash: true,
   maxBackupRetention: 7,
+  webManagementEnabled: false,
   webServerPort: 18080,
   webAdminUsername: 'admin',
   webAdminPassword: '',
+  webAdminPasswordConfigured: false,
+  webReverseProxyEnabled: false,
+  webReverseProxyDomain: '',
+  webReverseProxyPort: 18081,
+  webReverseProxyOpenRestyPath: '',
+  webLoginFailureBanThreshold: 5,
+  webLoginFailureBanSeconds: 1800,
+  webCaptchaCharset: 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789',
+  webCaptchaFontSize: 32,
+  webCaptchaNoisePoints: 24,
+  webCaptchaLength: 4,
+  webIpWhitelist: [
+    { value: 'CN_MAINLAND', group: '默认', note: '内置中国大陆 IPv4 CIDR' },
+  ],
 }
 
 export const initialInstances: ServerInstance[] = []

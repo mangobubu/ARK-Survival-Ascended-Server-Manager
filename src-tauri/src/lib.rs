@@ -8,9 +8,11 @@ mod import_export;
 mod instance_config_import;
 mod models;
 mod rcon;
+mod reverse_proxy;
 mod steamcmd;
 mod storage;
 mod sync_events;
+mod web_auth;
 mod web_server;
 mod window_controls;
 
@@ -28,15 +30,43 @@ pub fn run() {
         .setup(|app| {
             let runtime = app_state::AppRuntime::load(app.handle())
                 .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
-            let web_server_port = runtime
+            let initial_settings = runtime
                 .settings()
-                .map_err(|error| Box::<dyn std::error::Error>::from(error))?
-                .web_server_port;
+                .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
             app.manage(sync_events::SyncEventBus::default());
+            app.manage(reverse_proxy::ReverseProxyManager::default());
+            app.manage(web_server::WebServerManager::default());
             app.manage(runtime.clone());
             window_controls::setup_window_controls(app, &runtime)
                 .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
-            web_server::start(app.handle().clone(), runtime, web_server_port);
+            let web_ready = if initial_settings.web_management_enabled {
+                match web_server::apply_settings_from_app(app.handle(), &initial_settings) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        let _ = runtime.add_log(
+                            "Web服务",
+                            "error",
+                            &format!("应用启动时未能启动 Web 管理：{error}"),
+                        );
+                        false
+                    }
+                }
+            } else {
+                false
+            };
+            if web_ready {
+                if let Err(error) =
+                    reverse_proxy::apply_settings_from_app(app.handle(), &initial_settings)
+                {
+                    if let Some(runtime) = app.handle().try_state::<app_state::AppRuntime>() {
+                        let _ = runtime.add_log(
+                            "Web反代",
+                            "warn",
+                            &format!("应用启动时未能启用域名反向代理：{error}"),
+                        );
+                    }
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -46,7 +76,10 @@ pub fn run() {
             steamcmd::install_steamcmd,
             commands::get_settings,
             commands::save_settings,
+            commands::list_web_security_bans,
+            commands::unban_web_security_ip,
             commands::list_instances,
+            commands::clear_startup_auto_update_skip_flags,
             commands::check_instance_port,
             commands::create_instance,
             commands::read_server_directory_config,
@@ -80,6 +113,10 @@ pub fn run() {
         .run(move |app_handle, event| {
             if let RunEvent::WindowEvent { label, event, .. } = event {
                 if label == MAIN_WINDOW_LABEL {
+                    if matches!(event, tauri::WindowEvent::Destroyed) {
+                        web_server::shutdown(app_handle);
+                        reverse_proxy::shutdown(app_handle);
+                    }
                     let Some(state) = app_handle
                         .try_state::<std::sync::Arc<window_controls::WindowControlState>>()
                     else {

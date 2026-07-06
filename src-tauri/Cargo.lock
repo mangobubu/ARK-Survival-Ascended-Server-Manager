@@ -65,11 +65,13 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tempfile",
  "tokio",
+ "toml 0.9.12+spec-1.1.0",
  "windows-sys 0.61.2",
  "zip",
 ]

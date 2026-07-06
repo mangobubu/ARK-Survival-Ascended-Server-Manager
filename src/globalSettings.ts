@@ -1,20 +1,24 @@
 import { getSettings, saveSettings } from './backendApi'
 import { defaultGlobalSettings } from './data'
 import { SETTINGS_CHANGED_EVENT, subscribeBackendEvent } from './syncEvents'
+import { cacheThemePreference, loadCachedThemePreference } from './themePreference'
 import type { GlobalSettings } from './types'
 
 const LOCAL_SETTINGS_EVENT = 'asa-global-settings-local'
 
 export function loadGlobalSettings(): GlobalSettings {
-  return defaultGlobalSettings
+  return { ...defaultGlobalSettings, theme: loadCachedThemePreference() }
 }
 
 export async function loadGlobalSettingsFromBackend(): Promise<GlobalSettings> {
-  return { ...defaultGlobalSettings, ...await getSettings() }
+  const settings = { ...defaultGlobalSettings, ...await getSettings() }
+  cacheThemePreference(settings.theme)
+  return settings
 }
 
 export async function saveGlobalSettings(settings: GlobalSettings) {
   const saved = await saveSettings(settings)
+  cacheThemePreference(saved.theme)
   window.dispatchEvent(new CustomEvent<GlobalSettings>(LOCAL_SETTINGS_EVENT, { detail: saved }))
   return saved
 }
@@ -27,7 +31,9 @@ export function subscribeGlobalSettings(onChange: (settings: GlobalSettings) => 
   let disposed = false
 
   const handleLocal = (event: Event) => {
-    onChange((event as CustomEvent<GlobalSettings>).detail)
+    const settings = (event as CustomEvent<GlobalSettings>).detail
+    cacheThemePreference(settings.theme)
+    onChange(settings)
   }
   const handleFocus = () => {
     void loadGlobalSettingsFromBackend().then(onChange).catch((error) => {
@@ -39,6 +45,7 @@ export function subscribeGlobalSettings(onChange: (settings: GlobalSettings) => 
   window.addEventListener('focus', handleFocus)
 
   const unsubscribeBackend = subscribeBackendEvent(SETTINGS_CHANGED_EVENT, (settings) => {
+    cacheThemePreference(settings.theme)
     if (!disposed) onChange(settings)
   })
 
