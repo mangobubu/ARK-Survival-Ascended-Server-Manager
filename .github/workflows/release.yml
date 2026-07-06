@@ -1,0 +1,103 @@
+name: 发布 Windows x64 Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-windows-x64:
+    name: 构建并发布 Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: 校验版本标签格式
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_NAME -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Release 工作流只接受 v<主版本>.<次版本>.<修订版本> 标签，当前为 $env:GITHUB_REF_NAME"
+          }
+
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 安装 Rust x64 工具链
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-pc-windows-msvc
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 构建 Tauri Windows x64 安装包
+        run: npm run tauri -- build --ci --target x86_64-pc-windows-msvc --bundles nsis --no-sign
+
+      - name: 整理发布产物
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tagName = $env:GITHUB_REF_NAME
+          $artifactDir = Join-Path $PWD 'release-artifacts'
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+
+          $patterns = @(
+            'src-tauri\target\x86_64-pc-windows-msvc\release\bundle\nsis\*.exe',
+            'src-tauri\target\x86_64-pc-windows-msvc\release\*.exe'
+          )
+
+          foreach ($pattern in $patterns) {
+            Copy-Item -Path $pattern -Destination $artifactDir -ErrorAction SilentlyContinue
+          }
+
+          $artifacts = Get-ChildItem -Path $artifactDir -File
+          if (-not $artifacts) {
+            throw '未找到 Windows x64 发布产物'
+          }
+
+          $zipPath = Join-Path $PWD "asa-server-manager-$tagName-windows-x64.zip"
+          Compress-Archive -Path (Join-Path $artifactDir '*') -DestinationPath $zipPath -Force
+
+          @"
+          # 方舟进化飞升服务器管理器 $tagName
+
+          - 仅提供 Windows x64 发布产物。
+          - 本项目面向 ARK: Survival Ascended 服务端管理场景。
+          - 发布包由 GitHub Actions 在 Windows x64 环境构建生成。
+          "@ | Set-Content -Path release-notes.md -Encoding UTF8
+
+          Get-ChildItem -Path $artifactDir
+          Get-Item -Path $zipPath
+
+      - name: 上传工作流构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: asa-server-manager-${{ github.ref_name }}-windows-x64
+          path: |
+            release-artifacts/*
+            asa-server-manager-${{ github.ref_name }}-windows-x64.zip
+          if-no-files-found: error
+
+      - name: 创建 GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" `
+            "asa-server-manager-$env:GITHUB_REF_NAME-windows-x64.zip" `
+            --title "方舟进化飞升服务器管理器 $env:GITHUB_REF_NAME" `
+            --notes-file release-notes.md

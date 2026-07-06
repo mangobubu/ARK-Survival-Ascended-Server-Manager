@@ -2,6 +2,12 @@
 
 基于 Tauri 2、Rust、React 19 与 Ant Design 6.5 的桌面端 ASA 服务器管理器。前端负责交互界面，实例、配置、安装更新、进程控制、日志、备份、导入导出等核心能力统一由 Rust 后端模块承载。
 
+## 平台支持
+
+- 当前项目仅面向 **Windows x64** 架构发布。
+- 原因：ARK: Survival Ascended Dedicated Server 当前运行与管理场景以 Windows 服务端环境为核心，本管理器也围绕 Windows 下的 ASA 服务端目录、进程与 SteamCMD 管理能力设计。
+- GitHub Releases 只会提供 Windows x64 构建产物，不提供 Linux、macOS 或 ARM 架构包。
+
 ## 技术版本
 
 - Tauri CLI / Rust `2.11.4`，JavaScript API `2.11.1`
@@ -51,6 +57,18 @@ npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri -- build --no-bundle
 npm run tauri -- dev
+```
+
+## 发布规则
+
+- GitHub Release 工作流位于 `.github/workflows/release.yml`。
+- 只有推送形如 `v0.1.0`、`v1.2.3` 的 `v*.*.*` 版本标签时，才会触发 Release 构建。
+- Release 工作流固定使用 `windows-latest`，并显式指定 `x86_64-pc-windows-msvc` 目标，只生成 Windows x64 发布产物。
+- 示例：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 ## 参数参考
