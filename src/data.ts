@@ -21,6 +21,13 @@ export const defaultGlobalSettings: GlobalSettings = {
   webReverseProxyDomain: '',
   webReverseProxyPort: 18081,
   webReverseProxyOpenRestyPath: '',
+  webHttpsEnabled: false,
+  webAcmeAutoIssueEnabled: false,
+  webAcmeDirectoryUrl: 'https://acme-v02.api.letsencrypt.org/directory',
+  webAcmeAccountEmail: '',
+  webAcmeTencentSecretId: '',
+  webAcmeTencentSecretKey: '',
+  webAcmeTencentSecretKeyConfigured: false,
   webLoginFailureBanThreshold: 5,
   webLoginFailureBanSeconds: 1800,
   webCaptchaCharset: 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789',
@@ -82,7 +89,7 @@ export const initialLogs: LogLine[] = []
 export const initialMods: ModItem[] = []
 
 export const defaultConfig: ServerConfig = {
-  sessionName: '方舟进化 · 孤岛生存', serverPassword: '', spectatorPassword: '', adminPassword: 'ark-admin-2026', gamePort: 7777, queryPort: 27015,
+  sessionName: '方舟进化 · 孤岛生存', serverPassword: '', spectatorPassword: '', adminPassword: '', gamePort: 7777, queryPort: 27015,
   rconEnabled: true, rconPort: 32330, visibility: 'public', clusterId: 'Boat-ASA-Cluster', crossTransfer: true, maxPlayers: 30,
   pve: true, hardcore: false, disableFriendlyFire: false, enablePvPGamma: true, allowHitMarkers: true,
   difficulty: 5, xpMultiplier: 1.5, tamingSpeed: 3, harvestAmount: 2, harvestHealthMultiplier: 1,

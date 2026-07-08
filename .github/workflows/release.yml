@@ -44,6 +44,76 @@ jobs:
       - name: 安装前端依赖
         run: npm ci
 
+      - name: 前端类型检查
+        run: npx tsc -b --noEmit
+
+      - name: 配置元数据一致性校验
+        run: npm run check:config-metadata
+
+      - name: 前端依赖安全审计
+        run: npm audit --audit-level=high
+
+      - name: Rust 格式检查
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Rust Clippy 静态检查
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Rust 依赖安全审计
+        shell: pwsh
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit --file src-tauri/Cargo.lock --deny warnings
+
+      - name: Rust 供应链策略检查
+        shell: pwsh
+        run: |
+          cargo install cargo-deny --locked
+          cargo deny --manifest-path src-tauri/Cargo.toml check advisories bans sources
+
+      - name: Rust 单元测试
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: 前端生产构建
+        run: npm run build
+
+      - name: 生成发布 SBOM 与前端产物哈希
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File .github/scripts/New-ReleaseManifest.ps1 -OutputPath release-sbom.json
+
+      - name: 发布安全快照校验
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tauriConfig = Get-Content -Raw -Encoding UTF8 src-tauri/tauri.conf.json | ConvertFrom-Json
+          $csp = $tauriConfig.app.security.csp
+          if ([string]::IsNullOrWhiteSpace($csp)) {
+            throw 'Tauri CSP 不能为空'
+          }
+          if ($csp -match "'unsafe-eval'" -or $csp -match "https:") {
+            throw "Tauri CSP 不能包含 unsafe-eval 或泛化 https: 源：$csp"
+          }
+
+          $indexHtml = Get-Content -Raw -Encoding UTF8 dist/index.html
+          if ($indexHtml -match '<script(?![^>]*\bsrc=)[^>]*>') {
+            throw '生产 index.html 不能包含内联脚本，避免破坏 CSP'
+          }
+          if ($indexHtml -match 'https?://') {
+            throw '生产 index.html 不能引用远程资源'
+          }
+
+          $releaseSbom = Get-Content -Raw -Encoding UTF8 release-sbom.json | ConvertFrom-Json
+          if ($releaseSbom.schemaVersion -ne 1) {
+            throw '发布 SBOM schemaVersion 无效'
+          }
+          if ($releaseSbom.frontendDist.fileCount -lt 1) {
+            throw '发布 SBOM 未记录前端构建产物'
+          }
+          if ($releaseSbom.npm.packageCount -lt 1 -or $releaseSbom.cargo.packageCount -lt 1) {
+            throw '发布 SBOM 未记录 npm 或 Cargo 依赖'
+          }
+
       - name: 构建 Tauri Windows x64 安装包
         run: npm run tauri -- build --ci --target x86_64-pc-windows-msvc --bundles nsis --no-sign
 
@@ -72,16 +142,29 @@ jobs:
           $zipPath = Join-Path $PWD "asa-server-manager-$tagName-windows-x64.zip"
           Compress-Archive -Path (Join-Path $artifactDir '*') -DestinationPath $zipPath -Force
 
+          $checksumPath = Join-Path $PWD 'SHA256SUMS.txt'
+          $hashTargets = @()
+          $hashTargets += Get-ChildItem -Path $artifactDir -File | Sort-Object Name
+          $hashTargets += Get-Item -Path $zipPath
+          $hashTargets += Get-Item -Path (Join-Path $PWD 'release-sbom.json')
+          $hashLines = foreach ($item in $hashTargets) {
+            "$((Get-FileHash -Path $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($item.Name)"
+          }
+          $hashLines | Set-Content -Path $checksumPath -Encoding UTF8
+
           @"
           # 方舟进化飞升服务器管理器 $tagName
 
           - 仅提供 Windows x64 发布产物。
           - 本项目面向 ARK: Survival Ascended 服务端管理场景。
           - 发布包由 GitHub Actions 在 Windows x64 环境构建生成。
+          - 随 Release 附带 release-sbom.json 与 SHA256SUMS.txt，用于依赖审计追踪与发布包完整性校验。
           "@ | Set-Content -Path release-notes.md -Encoding UTF8
 
           Get-ChildItem -Path $artifactDir
           Get-Item -Path $zipPath
+          Get-Item -Path release-sbom.json
+          Get-Item -Path SHA256SUMS.txt
 
       - name: 上传工作流构建产物
         uses: actions/upload-artifact@v4
@@ -90,6 +173,8 @@ jobs:
           path: |
             release-artifacts/*
             asa-server-manager-${{ github.ref_name }}-windows-x64.zip
+            release-sbom.json
+            SHA256SUMS.txt
           if-no-files-found: error
 
       - name: 创建 GitHub Release
@@ -99,5 +184,7 @@ jobs:
         run: |
           gh release create "$env:GITHUB_REF_NAME" `
             "asa-server-manager-$env:GITHUB_REF_NAME-windows-x64.zip" `
+            "release-sbom.json" `
+            "SHA256SUMS.txt" `
             --title "方舟进化飞升服务器管理器 $env:GITHUB_REF_NAME" `
             --notes-file release-notes.md

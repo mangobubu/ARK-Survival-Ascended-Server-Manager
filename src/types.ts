@@ -19,6 +19,26 @@ export interface WebSecurityUnbanResult {
   existed: boolean
 }
 
+export type AsaConfigTarget =
+  | 'managerOnly'
+  | 'launchArgument'
+  | 'gameUserSettingsServerSettings'
+  | 'gameIniShooterGameMode'
+  | 'engineIniIpNetDriver'
+
+export interface AsaConfigFieldMetadata {
+  key: keyof ServerConfig | string
+  target: AsaConfigTarget
+  defaultValue: unknown
+  sensitiveExport: boolean
+}
+
+export interface AsaConfigMetadataDocument {
+  fields: AsaConfigFieldMetadata[]
+  sensitiveExportKeys: string[]
+  dynamicInstanceKeys: string[]
+}
+
 export interface GlobalSettings {
   steamCmdPath: string
   serverStoragePath: string
@@ -40,6 +60,13 @@ export interface GlobalSettings {
   webReverseProxyDomain: string
   webReverseProxyPort: number
   webReverseProxyOpenRestyPath: string
+  webHttpsEnabled: boolean
+  webAcmeAutoIssueEnabled: boolean
+  webAcmeDirectoryUrl: string
+  webAcmeAccountEmail: string
+  webAcmeTencentSecretId: string
+  webAcmeTencentSecretKey: string
+  webAcmeTencentSecretKeyConfigured: boolean
   webLoginFailureBanThreshold: number
   webLoginFailureBanSeconds: number
   webCaptchaCharset: string

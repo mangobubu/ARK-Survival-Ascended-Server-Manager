@@ -2,6 +2,7 @@ import { Channel, invoke } from '@tauri-apps/api/core'
 import { getWebApiBaseUrl, isTauriRuntime } from './runtime'
 import type {
   AddInstancePayload,
+  AsaConfigMetadataDocument,
   BackupItem,
   ExportResult,
   GlobalSettings,
@@ -22,8 +23,6 @@ import type {
   WebSecurityUnbanResult,
 } from './types'
 
-const WEB_AUTH_TOKEN_KEY = 'asa-web-auth-token'
-
 export interface WebAuthStatus {
   configured: boolean
   captchaRequired: boolean
@@ -41,29 +40,30 @@ export interface WebCaptchaInput {
   answer: string
 }
 
-export function getWebAuthToken() {
-  return window.localStorage.getItem(WEB_AUTH_TOKEN_KEY)
+interface WebRiskConfirmation {
+  token: string
+  command: string
+  expiresInSeconds: number
 }
 
-export function setWebAuthToken(token: string) {
-  window.localStorage.setItem(WEB_AUTH_TOKEN_KEY, token)
+type WebCommandRisk = 'read' | 'write' | 'high'
+
+interface WebCommandSecurityPolicy {
+  command: string
+  label: string
+  risk: WebCommandRisk
 }
 
-export function clearWebAuthToken() {
-  window.localStorage.removeItem(WEB_AUTH_TOKEN_KEY)
-}
+let webCommandSecurityPoliciesPromise: Promise<Map<string, WebCommandSecurityPolicy>> | null = null
 
 export function getAuthorizedWebUrl(path: string) {
-  const token = getWebAuthToken()
   const url = new URL(path, `${getWebApiBaseUrl()}/`)
-  if (token) url.searchParams.set('token', token)
   return url.toString()
 }
 
 async function parseWebApiPayload<T>(response: Response, fallbackError: string) {
   const payload = await response.json().catch(() => null) as { ok?: boolean; data?: T; error?: string } | null
   if (!response.ok || !payload?.ok) {
-    if (response.status === 401) clearWebAuthToken()
     throw new Error(payload?.error ?? fallbackError)
   }
   return payload.data as T
@@ -93,28 +93,17 @@ export async function loginWeb(username: string, password: string, captcha?: Web
       captchaAnswer: captcha?.answer,
     }),
   })
-  const data = await parseWebApiPayload<{ token: string }>(response, 'Web 登录失败')
-  clearWebAuthToken()
-  return data
+  return parseWebApiPayload<void>(response, 'Web 登录失败')
 }
 
 export async function logoutWeb() {
-  const token = getWebAuthToken()
   try {
-    if (token) {
-      await fetch(`${getWebApiBaseUrl()}/api/auth/logout`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-    } else {
-      await fetch(`${getWebApiBaseUrl()}/api/auth/logout`, {
-        method: 'POST',
-        credentials: 'same-origin',
-      })
-    }
+    await fetch(`${getWebApiBaseUrl()}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    })
   } finally {
-    clearWebAuthToken()
+    // Web 登录态仅由 HttpOnly Cookie 承载，前端不保存可读取 token。
   }
 }
 
@@ -124,21 +113,67 @@ async function invokeCommand<T>(command: string, args: Record<string, unknown> =
 }
 
 async function webInvoke<T>(command: string, args: Record<string, unknown>) {
-  const token = getWebAuthToken()
+  const policy = await getWebCommandSecurityPolicy(command)
+  const payloadArgs = policy.risk === 'high'
+    ? { ...args, riskConfirmationToken: await requestWebRiskConfirmation(policy) }
+    : args
   const response = await fetch(`${getWebApiBaseUrl()}/api/invoke`, {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ command, args }),
+    body: JSON.stringify({ command, args: payloadArgs }),
   })
 
   return parseWebApiPayload<T>(response, `Web API 调用失败：${command}`)
 }
 
+async function getWebCommandSecurityPolicy(command: string) {
+  const policies = await loadWebCommandSecurityPolicies()
+  const policy = policies.get(command)
+  if (!policy) {
+    throw new Error(`Web 命令 ${command} 未出现在后端安全元数据中，已阻止执行`)
+  }
+  return policy
+}
+
+async function loadWebCommandSecurityPolicies() {
+  if (!webCommandSecurityPoliciesPromise) {
+    webCommandSecurityPoliciesPromise = fetch(`${getWebApiBaseUrl()}/api/commands/security`, {
+      credentials: 'same-origin',
+    })
+      .then((response) => parseWebApiPayload<WebCommandSecurityPolicy[]>(response, '无法读取 Web 命令安全元数据'))
+      .then((policies) => new Map(policies.map((policy) => [policy.command, policy])))
+      .catch((error) => {
+        webCommandSecurityPoliciesPromise = null
+        throw error
+      })
+  }
+  return webCommandSecurityPoliciesPromise
+}
+
+async function requestWebRiskConfirmation(policy: WebCommandSecurityPolicy) {
+  const confirmed = window.confirm(
+    `即将执行高风险 Web 管理操作：${policy.label}\n\n该操作可能修改服务器配置、执行 RCON、恢复备份或删除实例。确认继续吗？`,
+  )
+  if (!confirmed) {
+    throw new Error('已取消高风险 Web 管理操作')
+  }
+
+  const response = await fetch(`${getWebApiBaseUrl()}/api/risk/confirm`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command: policy.command }),
+  })
+  const confirmation = await parseWebApiPayload<WebRiskConfirmation>(response, '无法获取 Web 高风险操作确认令牌')
+  return confirmation.token
+}
+
 export const getSettings = () => invokeCommand<GlobalSettings>('get_settings')
+
+export const getAsaConfigMetadata = () => invokeCommand<AsaConfigMetadataDocument>('get_asa_config_metadata')
 
 export const saveSettings = (settings: GlobalSettings) => invokeCommand<GlobalSettings>('save_settings', { settings })
 

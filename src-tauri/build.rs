@@ -15,6 +15,8 @@ fn generate_embedded_web_assets() {
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR 未设置"));
     let dist_dir = manifest_dir.join("..").join("dist");
 
+    println!("cargo:rerun-if-changed={}", dist_dir.display());
+
     let mut entries = Vec::new();
     if dist_dir.is_dir() {
         collect_files(&dist_dir, &dist_dir, &mut entries);
@@ -46,10 +48,10 @@ fn collect_files(root: &Path, current: &Path, entries: &mut Vec<(String, PathBuf
         let path = entry.path();
         if path.is_dir() {
             collect_files(root, &path, entries);
-        } else if path.is_file() {
-            if let Ok(relative) = path.strip_prefix(root) {
-                entries.push((relative.to_string_lossy().to_string(), path));
-            }
+        } else if path.is_file()
+            && let Ok(relative) = path.strip_prefix(root)
+        {
+            entries.push((relative.to_string_lossy().to_string(), path));
         }
     }
 

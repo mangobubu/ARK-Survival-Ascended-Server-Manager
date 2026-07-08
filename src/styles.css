@@ -55,8 +55,6 @@ button, input, textarea { font: inherit; }
     linear-gradient(90deg, rgba(2, 8, 18, .94) 0%, rgba(3, 14, 25, .78) 44%, rgba(2, 8, 16, .90) 100%),
     radial-gradient(circle at 20% 18%, rgba(0, 189, 255, .25), transparent 30%),
     radial-gradient(circle at 78% 82%, rgba(24, 210, 136, .18), transparent 28%),
-    url('https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/2399830/library_hero.jpg') center / cover no-repeat,
-    url('https://cdn.cloudflare.steamstatic.com/steam/apps/2399830/library_hero.jpg') center / cover no-repeat,
     linear-gradient(135deg, #03111d 0%, #072236 52%, #01060d 100%);
 }
 

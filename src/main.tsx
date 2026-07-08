@@ -1,20 +1,21 @@
-import { StrictMode, useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import { StrictMode, Suspense, lazy, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { setTheme as setTauriAppTheme } from '@tauri-apps/api/app'
 import { ConfigProvider, theme } from 'antd'
 import enUS from 'antd/locale/en_US'
 import zhCN from 'antd/locale/zh_CN'
-import AddInstanceWindow from './AddInstanceWindow'
-import App from './App'
-import { clearWebAuthToken, getSettings } from './backendApi'
-import LoginPage from './LoginPage'
-import RconWindow from './RconWindow'
-import SettingsWindow from './SettingsWindow'
+import { getSettings } from './backendApi'
 import { loadGlobalSettings, loadGlobalSettingsFromBackend, subscribeGlobalSettings } from './globalSettings'
 import { isTauriRuntime } from './runtime'
 import { resolveThemeMode, systemPrefersDark, themeMetaColor } from './themePreference'
 import './styles.css'
 import type { GlobalSettings } from './types'
+
+const AddInstanceWindow = lazy(() => import('./AddInstanceWindow'))
+const App = lazy(() => import('./App'))
+const LoginPage = lazy(() => import('./LoginPage'))
+const RconWindow = lazy(() => import('./RconWindow'))
+const SettingsWindow = lazy(() => import('./SettingsWindow'))
 
 const isSettingsWindow = new URLSearchParams(window.location.search).get('window') === 'settings'
 const isAddInstanceWindow = new URLSearchParams(window.location.search).get('window') === 'add-instance'
@@ -38,6 +39,10 @@ function applyNativeThemePreference(themePreference: GlobalSettings['theme']) {
   void setTauriAppTheme(themePreference === 'system' ? null : themePreference).catch((error) => {
     console.error('同步桌面端原生主题失败', error)
   })
+}
+
+function RouteLoading({ text = '正在加载界面...' }: { text?: string }) {
+  return <div className="web-login-loading">{text}</div>
 }
 
 function Root() {
@@ -92,7 +97,6 @@ function Root() {
       })
       .catch((error) => {
         console.error('Web 登录状态已失效', error)
-        clearWebAuthToken()
         if (!disposed) setWebAuthenticated(false)
       })
       .finally(() => {
@@ -157,15 +161,25 @@ function Root() {
   return (
     <ConfigProvider locale={settings.language === 'en-US' ? enUS : zhCN} theme={appTheme}>
       {needsWebLogin ? (
-        checkingWebAuth ? <div className="web-login-loading">正在校验 Web 登录状态...</div> : <LoginPage onAuthenticated={() => setWebAuthenticated(true)} />
-      ) : isSettingsWindow ? (
-        <SettingsWindow />
-      ) : isAddInstanceWindow ? (
-        <AddInstanceWindow />
-      ) : isRconWindow ? (
-        <RconWindow />
+        checkingWebAuth ? (
+          <RouteLoading text="正在校验 Web 登录状态..." />
+        ) : (
+          <Suspense fallback={<RouteLoading text="正在加载登录界面..." />}>
+            <LoginPage onAuthenticated={() => setWebAuthenticated(true)} />
+          </Suspense>
+        )
       ) : (
-        <App />
+        <Suspense fallback={<RouteLoading />}>
+          {isSettingsWindow ? (
+            <SettingsWindow />
+          ) : isAddInstanceWindow ? (
+            <AddInstanceWindow />
+          ) : isRconWindow ? (
+            <RconWindow />
+          ) : (
+            <App />
+          )}
+        </Suspense>
       )}
     </ConfigProvider>
   )

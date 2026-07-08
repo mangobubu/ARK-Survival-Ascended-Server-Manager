@@ -1,8 +1,10 @@
 use crate::{
     app_state::{AppRuntime, current_timestamp_text},
+    asa_config_metadata,
     models::{ExportResult, ImportResult, InstanceConfigBundle},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{fs, path::Path};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -35,14 +37,18 @@ pub fn export_instances(
 
     let bundles = selected
         .into_iter()
-        .map(|instance| InstanceConfigBundle {
-            config: snapshot
+        .map(|instance| {
+            let mut config = snapshot
                 .configs
                 .get(&instance.id)
                 .cloned()
-                .unwrap_or_else(|| serde_json::json!({})),
-            mods: snapshot.mods.get(&instance.id).cloned().unwrap_or_default(),
-            instance,
+                .unwrap_or_else(|| serde_json::json!({}));
+            redact_sensitive_config(&mut config);
+            InstanceConfigBundle {
+                config,
+                mods: snapshot.mods.get(&instance.id).cloned().unwrap_or_default(),
+                instance,
+            }
         })
         .collect::<Vec<_>>();
 
@@ -67,6 +73,30 @@ pub fn export_instances(
     })
 }
 
+fn redact_sensitive_config(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map.iter_mut() {
+                if is_sensitive_export_key(key) {
+                    *value = Value::String(String::new());
+                } else {
+                    redact_sensitive_config(value);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_sensitive_config(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_sensitive_export_key(key: &str) -> bool {
+    asa_config_metadata::is_sensitive_export_key(key)
+}
+
 pub fn import_instances(runtime: &AppRuntime, path: &Path) -> Result<ImportResult, String> {
     if !path.is_file() {
         return Err(format!("导入文件不存在：{}", path.display()));
@@ -89,10 +119,40 @@ pub fn import_instances(runtime: &AppRuntime, path: &Path) -> Result<ImportResul
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use serde_json::json;
+
     #[test]
     fn 拒绝不存在的导入文件() {
         let temp = tempfile::tempdir().expect("创建临时目录");
         let path = temp.path().join("missing.json");
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn 敏感导出字段由配置元数据驱动递归脱敏() {
+        let mut value = json!({
+            "sessionName": "公开名称",
+            "serverPassword": "join-secret",
+            "adminPassword": "admin-secret",
+            "nested": {
+                "spectatorPassword": "spectator-secret",
+                "webAdminPassword": "web-secret",
+                "items": [
+                    { "webAcmeTencentSecretKey": "tencent-secret" },
+                    { "sessionName": "嵌套公开名称" }
+                ]
+            }
+        });
+
+        redact_sensitive_config(&mut value);
+
+        assert_eq!(value["sessionName"], "公开名称");
+        assert_eq!(value["serverPassword"], "");
+        assert_eq!(value["adminPassword"], "");
+        assert_eq!(value["nested"]["spectatorPassword"], "");
+        assert_eq!(value["nested"]["webAdminPassword"], "");
+        assert_eq!(value["nested"]["items"][0]["webAcmeTencentSecretKey"], "");
+        assert_eq!(value["nested"]["items"][1]["sessionName"], "嵌套公开名称");
     }
 }

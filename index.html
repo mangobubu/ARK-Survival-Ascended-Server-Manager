@@ -4,27 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#020c17" />
-    <script>
-      ;(() => {
-        const storageKey = 'asa-theme-preference'
-        let cachedTheme = 'dark'
-        try {
-          const savedTheme = localStorage.getItem(storageKey)
-          if (['dark', 'light', 'system'].includes(savedTheme)) cachedTheme = savedTheme
-        } catch {}
-        const systemDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true
-        const resolvedTheme = cachedTheme === 'system' ? (systemDark ? 'dark' : 'light') : cachedTheme
-        const root = document.documentElement
-        root.dataset.theme = cachedTheme
-        root.dataset.resolvedTheme = resolvedTheme
-        root.style.colorScheme = resolvedTheme
-        root.classList.toggle('theme-light', resolvedTheme === 'light')
-        root.classList.toggle('theme-dark', resolvedTheme === 'dark')
-        document
-          .querySelector('meta[name="theme-color"]')
-          ?.setAttribute('content', resolvedTheme === 'light' ? '#f3f7fb' : '#020c17')
-      })()
-    </script>
+    <script type="module" src="/src/themeBootstrap.ts"></script>
     <title>方舟进化飞升服务器管理器</title>
   </head>
   <body>

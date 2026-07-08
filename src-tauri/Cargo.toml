@@ -1,6 +1,6 @@
 [package]
 name = "asa-server-manager"
-version = "0.1.0"
+version = "0.2.0"
 description = "ARK: Survival Ascended server manager prototype"
 authors = ["ASA Server Manager"]
 edition = "2024"
@@ -13,17 +13,25 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
+base64ct = "1.8.3"
+der = "0.8.0"
 futures-util = "0.3"
 getrandom = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+pkcs8 = "0.11.0"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "blocking"] }
+ring = "0.17.14"
+rsa = { version = "0.9.10", features = ["pem", "sha2", "getrandom"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+spki = "0.8.0"
 tauri = { version = "2.11.4", features = ["tray-icon"] }
 tauri-plugin-dialog = "=2.6.0"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
 toml = "0.9"
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Memory", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+x509-cert = "0.2.5"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]

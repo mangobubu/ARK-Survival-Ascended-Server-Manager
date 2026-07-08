@@ -1,4 +1,4 @@
-import { Children, cloneElement, createContext, isValidElement, useContext, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   ApartmentOutlined,
   ArrowDownOutlined,
@@ -10,10 +10,8 @@ import {
   FileSearchOutlined,
   FolderOpenOutlined,
   HistoryOutlined,
-  InfoCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
-  RightOutlined,
   SafetyCertificateOutlined,
   SearchOutlined,
   SettingOutlined,
@@ -25,7 +23,6 @@ import {
   Checkbox,
   Empty,
   Input,
-  InputNumber,
   Modal,
   Progress,
   Radio,
@@ -40,48 +37,25 @@ import {
 } from 'antd'
 import { activeEventOptions } from './data'
 import { arkStackableItemOptions } from './arkStackableItemOptions'
-import { arkStackableItemZhCategories, arkStackableItemZhLabels } from './arkStackableItemLocalizations'
-import type { GlobalSettings, ItemStackOption, ItemStackOverride, ModItem, ServerConfig, ServerInstance } from './types'
+import {
+  AccordionGroup,
+  Field,
+  NumberField,
+  SectionCard,
+  filterSearchNode,
+  hasRenderableNode,
+  normalizeSearchText,
+} from './configPanelLayout'
+import {
+  ItemStackOverrideModal,
+  getItemStackItemLabel,
+  itemStackLanguageText,
+} from './itemStackOverrideEditor'
+import type { GlobalSettings, ModItem, ServerConfig, ServerInstance } from './types'
 
 const { Text, Paragraph } = Typography
 
 type AppLanguage = GlobalSettings['language']
-
-type ItemStackLanguageText = {
-  defaultStackInOption: (defaultStackSize: number) => string
-  defaultStackMeta: (defaultStackSize: number, category: string) => string
-  previewPlaceholder: string
-  unselectedItem: string
-}
-
-const itemStackLanguageText: Record<AppLanguage, ItemStackLanguageText> = {
-  'zh-CN': {
-    defaultStackInOption: (defaultStackSize) => `默认 ${defaultStackSize}`,
-    defaultStackMeta: (defaultStackSize, category) => `默认堆叠 ${defaultStackSize} · ${category}`,
-    previewPlaceholder: '请选择物品后生成 ConfigOverrideItemMaxQuantity 预览',
-    unselectedItem: '未选择物品',
-  },
-  'en-US': {
-    defaultStackInOption: (defaultStackSize) => `Default ${defaultStackSize}`,
-    defaultStackMeta: (defaultStackSize, category) => `Default stack ${defaultStackSize} · ${category}`,
-    previewPlaceholder: 'Select an item to generate ConfigOverrideItemMaxQuantity preview',
-    unselectedItem: 'No item selected',
-  },
-}
-
-function getItemStackItemLabel(item: ItemStackOption, language: AppLanguage) {
-  return language === 'zh-CN' ? item.zhLabel ?? arkStackableItemZhLabels[item.classString] ?? item.label : item.label
-}
-
-function getItemStackItemCategory(item: ItemStackOption, language: AppLanguage) {
-  return language === 'zh-CN' ? item.zhCategory ?? arkStackableItemZhCategories[item.category] ?? item.category : item.category
-}
-
-function formatStackableItemOptionLabel(item: ItemStackOption, language: AppLanguage) {
-  const displayLabel = getItemStackItemLabel(item, language)
-  const defaultStackText = itemStackLanguageText[language].defaultStackInOption(item.defaultStackSize)
-  return language === 'zh-CN' ? `${displayLabel}（${defaultStackText}）` : `${displayLabel} (${defaultStackText})`
-}
 
 interface ConfigPanelProps {
   instance: ServerInstance
@@ -97,159 +71,9 @@ interface ConfigPanelProps {
   checkingMods?: boolean
 }
 
-const AccordionContext = createContext<{
-  activeSection: string | null
-  setActiveSection: (section: string | null) => void
-  forceExpand: boolean
-} | null>(null)
-
-function AccordionGroup({ children, className = '', forceExpand = false }: { children: React.ReactNode; className?: string; forceExpand?: boolean }) {
-  const [activeSection, setActiveSection] = useState<string | null>(null)
-
-  return (
-    <AccordionContext.Provider value={{ activeSection, setActiveSection, forceExpand }}>
-      <div className={`settings-accordion ${className}`}>{children}</div>
-    </AccordionContext.Provider>
-  )
-}
-
-function SectionCard({ title, icon, note, children, className = '' }: { title: string; icon?: React.ReactNode; note?: string; children: React.ReactNode; className?: string }) {
-  const accordion = useContext(AccordionContext)
-  const expanded = accordion?.forceExpand || !accordion || accordion.activeSection === title
-
-  return (
-    <section className={`setting-card ${expanded ? 'setting-card--expanded' : ''} ${className}`}>
-      <button
-        type="button"
-        className="setting-card__header"
-        aria-expanded={expanded}
-        onClick={() => {
-          if (!accordion || accordion.forceExpand) return
-          accordion.setActiveSection(expanded ? null : title)
-        }}
-      >
-        <span className="setting-card__icon">{icon}</span>
-        <span>{title}</span>
-        {note && <span className="setting-card__note">{note}</span>}
-        {accordion && <RightOutlined className="setting-card__chevron" />}
-      </button>
-      {expanded && <div className="setting-card__body">{children}</div>}
-    </section>
-  )
-}
-
-function Field({ label, tip, children, wide = false }: { label: string; tip?: string; children: React.ReactNode; wide?: boolean }) {
-  return (
-    <div className={`config-field ${wide ? 'config-field--wide' : ''}`}>
-      <div className="config-field__label">
-        <span>{label}</span>
-        {tip && <Tooltip title={tip}><InfoCircleOutlined /></Tooltip>}
-      </div>
-      <div className="config-field__control">{children}</div>
-    </div>
-  )
-}
-
-function NumberField({ value, onChange, min = 0, max, step = 1, addonAfter }: { value: number; onChange: (value: number) => void; min?: number; max?: number; step?: number; addonAfter?: string }) {
-  if (addonAfter) {
-    return (
-      <Space.Compact>
-        <InputNumber value={value} min={min} max={max} step={step} onChange={(next) => onChange(next ?? min)} />
-        <Input value={addonAfter} disabled style={{ width: '48px', textAlign: 'center', padding: '4px 0' }} />
-      </Space.Compact>
-    )
-  }
-  return <InputNumber value={value} min={min} max={max} step={step} onChange={(next) => onChange(next ?? min)} />
-}
-
-type SearchableElementProps = {
-  children?: React.ReactNode
-  label?: React.ReactNode
-  note?: React.ReactNode
-  options?: unknown
-  placeholder?: React.ReactNode
-  tip?: React.ReactNode
-  title?: React.ReactNode
-}
-
-const searchablePropNames = ['label', 'note', 'options', 'placeholder', 'tip', 'title'] as const
-
-function normalizeSearchText(value: unknown) {
-  return String(value ?? '').trim().toLocaleLowerCase()
-}
-
-function textFromSearchValue(value: unknown): string {
-  if (value == null || typeof value === 'boolean') return ''
-  if (typeof value === 'string' || typeof value === 'number') return String(value)
-  if (Array.isArray(value)) return value.map(textFromSearchValue).join(' ')
-  if (isValidElement(value)) return collectSearchText(value)
-  if (typeof value === 'object') {
-    return Object.values(value as Record<string, unknown>).map(textFromSearchValue).join(' ')
-  }
-  return ''
-}
-
-function getSearchableProps(node: React.ReactNode) {
-  return isValidElement(node) ? node.props as SearchableElementProps : null
-}
-
-function collectOwnSearchText(node: React.ReactNode) {
-  if (typeof node === 'string' || typeof node === 'number') return String(node)
-  const props = getSearchableProps(node)
-  if (!props) return ''
-  return searchablePropNames.map((name) => textFromSearchValue(props[name])).join(' ')
-}
-
-function collectSearchText(node: React.ReactNode): string {
-  if (node == null || typeof node === 'boolean') return ''
-  if (typeof node === 'string' || typeof node === 'number') return String(node)
-  if (Array.isArray(node)) return node.map(collectSearchText).join(' ')
-
-  const props = getSearchableProps(node)
-  if (!props) return ''
-
-  const childText = Children.toArray(props.children).map(collectSearchText).join(' ')
-  return `${collectOwnSearchText(node)} ${childText}`
-}
-
-function hasRenderableNode(node: React.ReactNode): boolean {
-  if (node == null || typeof node === 'boolean') return false
-  if (Array.isArray(node)) return node.some(hasRenderableNode)
-  return true
-}
-
-function filterSearchNode(node: React.ReactNode, query: string): React.ReactNode {
-  if (!query) return node
-  if (node == null || typeof node === 'boolean') return null
-  if (typeof node === 'string' || typeof node === 'number') {
-    return normalizeSearchText(node).includes(query) ? node : null
-  }
-  if (Array.isArray(node)) {
-    const filtered = node.map((child) => filterSearchNode(child, query)).filter(hasRenderableNode)
-    return filtered.length > 0 ? filtered : null
-  }
-  if (!isValidElement(node)) return null
-
-  const props = node.props as SearchableElementProps
-  const ownMatches = normalizeSearchText(collectOwnSearchText(node)).includes(query)
-  const wholeMatches = normalizeSearchText(collectSearchText(node)).includes(query)
-
-  if (!wholeMatches) return null
-  if (node.type === Field) return node
-  if (node.type === SectionCard && ownMatches) return node
-
-  const filteredChildren = filterSearchNode(props.children, query)
-  if (hasRenderableNode(filteredChildren)) {
-    return cloneElement(node as React.ReactElement<SearchableElementProps>, undefined, filteredChildren)
-  }
-
-  return ownMatches ? node : null
-}
-
 export default function ConfigPanel({ instance, config, mods, dirty, language, onConfigChange, onModsChange, onSave, onApply, onCheckModUpdates, checkingMods = false }: ConfigPanelProps) {
   const [modModalOpen, setModModalOpen] = useState(false)
   const [itemStackModalOpen, setItemStackModalOpen] = useState(false)
-  const [itemStackSearch, setItemStackSearch] = useState('')
   const [modId, setModId] = useState('')
   const [activeTab, setActiveTab] = useState('basic')
   const [configSearch, setConfigSearch] = useState('')
@@ -263,106 +87,10 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
   const privateVisibilityNeedsAccess = config.visibility === 'private' && !hasJoinPassword && !hasExclusiveAccess
   const itemStackOverrides = config.itemStackOverrides ?? []
   const itemStackText = itemStackLanguageText[language]
-  const stackableItemSelectOptions = useMemo(() => arkStackableItemOptions.map((item) => ({
-    baseLabel: formatStackableItemOptionLabel(item, language),
-    value: item.classString,
-    searchText: [
-      getItemStackItemLabel(item, language),
-      item.label,
-      item.classString,
-      getItemStackItemCategory(item, language),
-      item.category,
-    ].join(' '),
-  })), [language])
-  const usedItemStackClassStrings = useMemo(() => new Set(
-    itemStackOverrides.map((override) => override.itemClassString.trim()).filter(Boolean)
-  ), [itemStackOverrides])
-
-  const getStackableItemSelectOptions = (currentClassString: string) => stackableItemSelectOptions.map((option) => {
-    const existsInOtherOverride = option.value !== currentClassString && usedItemStackClassStrings.has(option.value)
-    return {
-      ...option,
-      label: existsInOtherOverride ? (
-        <span className="item-stack-select-option item-stack-select-option--exists">
-          <span>{option.baseLabel}</span>
-          <Tag color="warning">已存在</Tag>
-        </span>
-      ) : option.baseLabel,
-      disabled: existsInOtherOverride,
-    }
-  })
 
   const openItemStackModal = () => {
-    setItemStackSearch('')
     setItemStackModalOpen(true)
   }
-
-  const updateItemStackOverrides = (next: ItemStackOverride[]) => {
-    set('itemStackOverrides', next)
-  }
-
-  const updateItemStackOverride = (index: number, patch: Partial<ItemStackOverride>) => {
-    updateItemStackOverrides(itemStackOverrides.map((item, itemIndex) => (
-      itemIndex === index ? { ...item, ...patch } : item
-    )))
-  }
-
-  const addItemStackOverride = () => {
-    updateItemStackOverrides([
-      ...itemStackOverrides,
-      { itemClassString: '', maxItemQuantity: 100, ignoreMultiplier: true },
-    ])
-  }
-
-  const removeItemStackOverride = (index: number) => {
-    updateItemStackOverrides(itemStackOverrides.filter((_, itemIndex) => itemIndex !== index))
-  }
-
-  const selectItemStackOverrideItem = (index: number, classString: string) => {
-    if (itemStackOverrides.some((item, itemIndex) => itemIndex !== index && item.itemClassString === classString)) return
-
-    const selectedItem = arkStackableItemOptions.find((item) => item.classString === classString)
-    updateItemStackOverride(index, {
-      itemClassString: classString,
-      maxItemQuantity: selectedItem?.defaultStackSize ?? itemStackOverrides[index]?.maxItemQuantity ?? 100,
-    })
-  }
-
-  const itemStackOverridePreview = (override: ItemStackOverride) => {
-    const itemClassString = override.itemClassString.trim()
-    if (!itemClassString) return itemStackText.previewPlaceholder
-
-    const maxItemQuantity = Math.max(1, Math.trunc(override.maxItemQuantity || 1))
-    const ignoreMultiplier = override.ignoreMultiplier ? 'True' : 'False'
-    return 'ConfigOverrideItemMaxQuantity=(ItemClassString="' + itemClassString + '",Quantity=(MaxItemQuantity=' + maxItemQuantity + ',bIgnoreMultiplier=' + ignoreMultiplier + '))'
-  }
-
-  const normalizedItemStackSearch = normalizeSearchText(itemStackSearch)
-  const itemStackOverrideRows = itemStackOverrides.map((override, index) => {
-    const selectedItem = arkStackableItemOptions.find((item) => item.classString === override.itemClassString)
-    const selectedItemLabel = selectedItem ? getItemStackItemLabel(selectedItem, language) : itemStackText.unselectedItem
-    const selectedItemCategory = selectedItem ? getItemStackItemCategory(selectedItem, language) : ''
-    const preview = itemStackOverridePreview(override)
-    const searchText = normalizeSearchText([
-      selectedItemLabel,
-      selectedItem?.label,
-      selectedItemCategory,
-      selectedItem?.category,
-      override.itemClassString,
-      override.maxItemQuantity,
-      preview,
-    ].join(' '))
-
-    return {
-      index,
-      override,
-      selectedItem,
-      selectedItemLabel,
-      selectedItemCategory,
-      preview,
-      hidden: normalizedItemStackSearch.length > 0 && !searchText.includes(normalizedItemStackSearch),
-    }
-  }).filter((row) => !row.hidden)
 
   const addMod = () => {
     const id = modId.trim()
@@ -862,118 +590,13 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
         </div>
       </div>
 
-      <Modal
-        title="物品单独叠加覆盖"
+      <ItemStackOverrideModal
+        language={language}
         open={itemStackModalOpen}
-        onCancel={() => setItemStackModalOpen(false)}
-        width={1120}
-        centered
-        maskClosable={false}
-        className="item-stack-modal"
-        footer={[
-          <Button key="close" type="primary" onClick={() => setItemStackModalOpen(false)}>完成</Button>,
-        ]}
-      >
-        <div className="item-stack-modal__intro">
-          <Paragraph type="secondary">
-            修改会实时写入当前实例配置；每次打开都会同步展示已有覆盖，保存配置后写入 Game.ini 的 ConfigOverrideItemMaxQuantity。
-          </Paragraph>
-        </div>
-        <div className="item-stack-modal__toolbar">
-          <Input
-            allowClear
-            aria-label="搜索已有物品覆盖"
-            placeholder="搜索已有覆盖：物品名称、分类、ItemClassString 或数量"
-            prefix={<SearchOutlined />}
-            value={itemStackSearch}
-            onChange={(event) => setItemStackSearch(event.target.value)}
-          />
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => {
-              setItemStackSearch('')
-              addItemStackOverride()
-            }}
-          >
-            添加物品覆盖
-          </Button>
-        </div>
-        <div className="item-stack-modal__meta">
-          <span>已显示 {itemStackOverrideRows.length} / {itemStackOverrides.length} 条覆盖</span>
-          <span>已有覆盖的物品会在选择列表中禁用，并标识“已存在”。</span>
-        </div>
-        {itemStackOverrides.length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未添加物品覆盖">
-            <Button type="primary" icon={<PlusOutlined />} onClick={addItemStackOverride}>立即添加</Button>
-          </Empty>
-        ) : itemStackOverrideRows.length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的物品覆盖">
-            <Button onClick={() => setItemStackSearch('')}>清空搜索</Button>
-          </Empty>
-        ) : (
-          <div className="item-stack-editor-table-wrap">
-            <table className="item-stack-editor-table">
-              <thead>
-                <tr>
-                  <th>物品</th>
-                  <th>最大叠加数量</th>
-                  <th>忽略全局倍率</th>
-                  <th>配置预览</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {itemStackOverrideRows.map((row) => (
-                  <tr key={row.index}>
-                    <td className="item-stack-editor-table__item">
-                      <Select
-                        showSearch
-                        className="item-stack-select"
-                        value={row.override.itemClassString || undefined}
-                        placeholder="搜索物品名称、分类或 ItemClassString"
-                        options={getStackableItemSelectOptions(row.override.itemClassString)}
-                        optionFilterProp="searchText"
-                        popupMatchSelectWidth={false}
-                        onChange={(value) => selectItemStackOverrideItem(row.index, value)}
-                      />
-                      {row.selectedItem && (
-                        <div className="item-stack-row-meta">
-                          {itemStackText.defaultStackMeta(row.selectedItem.defaultStackSize, row.selectedItemCategory)}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <InputNumber
-                        className="item-stack-quantity-input"
-                        value={row.override.maxItemQuantity}
-                        min={1}
-                        max={1000000}
-                        step={10}
-                        onChange={(value) => {
-                          const nextValue = Number(value ?? 1)
-                          updateItemStackOverride(row.index, { maxItemQuantity: Math.max(1, Math.trunc(Number.isFinite(nextValue) ? nextValue : 1)) })
-                        }}
-                      />
-                    </td>
-                    <td>
-                      <Switch checked={row.override.ignoreMultiplier} checkedChildren="是" unCheckedChildren="否" onChange={(value) => updateItemStackOverride(row.index, { ignoreMultiplier: value })} />
-                    </td>
-                    <td>
-                      <div className="code-preview code-preview--single item-stack-preview">{row.preview}</div>
-                    </td>
-                    <td>
-                      <Button danger size="small" icon={<DeleteOutlined />} onClick={() => removeItemStackOverride(row.index)}>
-                        删除
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Modal>
+        overrides={itemStackOverrides}
+        onChange={(next) => set('itemStackOverrides', next)}
+        onClose={() => setItemStackModalOpen(false)}
+      />
       <Modal title="添加 CurseForge MOD" open={modModalOpen} onCancel={() => setModModalOpen(false)} onOk={addMod} okText="添加到列表" cancelText="取消">
         <Paragraph type="secondary">输入 ASA CurseForge 项目 ID。原型会将其加入 ActiveMods 队列，正式接入后可从 CurseForge API 获取名称、版本与文件大小。</Paragraph>
         <Input autoFocus value={modId} onChange={(e) => setModId(e.target.value.replace(/\D/g, ''))} onPressEnter={addMod} placeholder="例如：928708" prefix={<BugOutlined />} />

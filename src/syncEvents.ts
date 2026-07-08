@@ -59,7 +59,7 @@ function webEventsUrl() {
 
 function ensureWebEventSource() {
   if (webEventSource) return webEventSource
-  webEventSource = new EventSource(webEventsUrl())
+  webEventSource = new EventSource(webEventsUrl(), { withCredentials: true })
   webEventSource.onerror = (error) => {
     console.error('Web 实时同步连接异常，浏览器会自动重连', error)
   }

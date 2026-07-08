@@ -1,11 +1,12 @@
 {
   "name": "asa-server-manager",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "check:config-metadata": "node scripts/verify-config-metadata.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
