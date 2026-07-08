@@ -18,7 +18,10 @@ const LOGIN_LOCK_DURATION: Duration = Duration::from_secs(30);
 const CAPTCHA_REQUIRED_DURATION: Duration = Duration::from_secs(60 * 60);
 const CAPTCHA_CHALLENGE_DURATION: Duration = Duration::from_secs(5 * 60);
 const CAPTCHA_MAX_CHALLENGES: usize = 1024;
+#[cfg(not(test))]
 const WEB_SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+#[cfg(test)]
+const WEB_SESSION_IDLE_TIMEOUT: Duration = Duration::from_millis(25);
 const WEB_SESSION_MAX_SESSIONS: usize = 1024;
 const RISK_CONFIRMATION_DURATION: Duration = Duration::from_secs(2 * 60);
 const RISK_CONFIRMATION_MAX_TOKENS: usize = 1024;

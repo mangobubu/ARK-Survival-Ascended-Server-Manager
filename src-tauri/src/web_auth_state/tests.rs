@@ -70,11 +70,7 @@ fn web_会话空闲超时后自动失效并清理高风险确认令牌() {
     let confirmation_token = auth_state
         .create_risk_confirmation(&session_token, "auth-key", "delete_instance")
         .expect("创建高风险确认令牌");
-    {
-        let mut sessions = auth_state.sessions.lock().expect("读取 Web 会话");
-        let state = sessions.get_mut(&session_token).expect("存在 Web 会话");
-        state.last_seen_at = Instant::now() - WEB_SESSION_IDLE_TIMEOUT - Duration::from_secs(1);
-    }
+    std::thread::sleep(WEB_SESSION_IDLE_TIMEOUT + Duration::from_millis(25));
 
     assert!(
         !auth_state
