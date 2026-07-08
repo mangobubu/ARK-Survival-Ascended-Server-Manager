@@ -14,6 +14,8 @@ const SERVICE: &str = "dnspod";
 const HOST: &str = "dnspod.tencentcloudapi.com";
 const ENDPOINT: &str = "https://dnspod.tencentcloudapi.com";
 const API_VERSION: &str = "2021-03-23";
+pub const DNSPOD_MIN_COMPATIBLE_TTL_SECONDS: u32 = 600;
+pub const DNSPOD_MAX_TTL_SECONDS: u32 = 604800;
 
 pub async fn create_txt_record(
     credential: &TencentDnsCredential,

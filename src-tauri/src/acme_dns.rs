@@ -5,7 +5,7 @@ use crate::{
 };
 use std::{thread, time::Duration};
 
-const DNS_TXT_TTL_SECONDS: u32 = 60;
+const DNS_TXT_TTL_SECONDS: u32 = tencent_dns::DNSPOD_MIN_COMPATIBLE_TTL_SECONDS;
 
 pub(crate) trait AcmeDnsProvider {
     fn create_txt_record(

@@ -1,6 +1,9 @@
 use serde_json::json;
 
-use super::{TencentDnsCredential, TencentDnsHttpRequest, signing};
+use super::{
+    DNSPOD_MAX_TTL_SECONDS, DNSPOD_MIN_COMPATIBLE_TTL_SECONDS, TencentDnsCredential,
+    TencentDnsHttpRequest, signing,
+};
 
 pub fn build_create_txt_record_request(
     credential: &TencentDnsCredential,
@@ -18,7 +21,7 @@ pub fn build_create_txt_record_request(
             "RecordType": "TXT",
             "RecordLine": "默认",
             "Value": value,
-            "TTL": ttl.clamp(60, 604800),
+            "TTL": ttl.clamp(DNSPOD_MIN_COMPATIBLE_TTL_SECONDS, DNSPOD_MAX_TTL_SECONDS),
         })
         .to_string(),
     )

@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::Value;
 
 #[test]
 fn unix_时间能转换为_utc_日期() {
@@ -24,6 +25,24 @@ fn 构造腾讯云_txt_记录请求会包含_dnspod_签名() {
     assert!(request.authorization.contains("TC3-HMAC-SHA256"));
     assert!(request.authorization.contains("Credential=AKIDEXAMPLE/"));
     assert!(request.body.contains("\"RecordType\":\"TXT\""));
+}
+
+#[test]
+fn 构造腾讯云_txt_记录请求会使用兼容免费版的_ttl() {
+    let request = build_create_txt_record_request(
+        &TencentDnsCredential {
+            secret_id: "AKIDEXAMPLE".to_string(),
+            secret_key: "SECRETEXAMPLE".to_string(),
+        },
+        "example.com",
+        "_acme-challenge",
+        "dns-token",
+        60,
+    )
+    .expect("构造请求");
+    let body: Value = serde_json::from_str(&request.body).expect("解析请求体");
+
+    assert_eq!(body["TTL"].as_u64(), Some(600));
 }
 
 #[test]
