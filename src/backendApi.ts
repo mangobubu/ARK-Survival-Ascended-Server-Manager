@@ -19,6 +19,7 @@ import type {
   SteamCmdCheck,
   SteamCmdInstallResult,
   SteamCmdProgress,
+  WebAcmeCertificateStatus,
   WebSecurityBanRecord,
   WebSecurityUnbanResult,
 } from './types'
@@ -178,6 +179,8 @@ export const getAsaConfigMetadata = () => invokeCommand<AsaConfigMetadataDocumen
 export const saveSettings = (settings: GlobalSettings) => invokeCommand<GlobalSettings>('save_settings', { settings })
 
 export const listWebSecurityBans = () => invokeCommand<WebSecurityBanRecord[]>('list_web_security_bans')
+
+export const getWebAcmeCertificateStatus = () => invokeCommand<WebAcmeCertificateStatus | null>('get_web_acme_certificate_status')
 
 export const unbanWebSecurityIp = (ip: string) => invokeCommand<WebSecurityUnbanResult>('unban_web_security_ip', { ip })
 

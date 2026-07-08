@@ -78,6 +78,8 @@ fn 生成_openresty_配置包含_lua_安全网关与反代_host() {
     assert!(rendered.contains("log_by_lua_block"));
     assert!(rendered.contains("/__asa_security/bans"));
     assert!(rendered.contains("/__asa_security/unban"));
+    assert!(rendered.contains("ngx.ctx.asa_security_admin_endpoint = true"));
+    assert!(!rendered.contains("by_lua_block {}"));
     assert!(rendered.contains("login_failure_ban_threshold = 7"));
     assert!(rendered.contains("login_failure_ban_seconds = 900"));
     assert!(rendered.contains("ip_whitelist_cidr_path = \"conf/asa-ip-whitelist-cidrs.txt\""));

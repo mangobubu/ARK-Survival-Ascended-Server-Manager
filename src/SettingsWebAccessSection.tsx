@@ -13,7 +13,7 @@ import {
 } from '@ant-design/icons'
 import { Button, Form, Input, InputNumber, Popover, Space, Switch, Tag, Typography } from 'antd'
 import type { FormInstance } from 'antd/es/form'
-import type { GlobalSettings, WebSecurityBanRecord } from './types'
+import type { GlobalSettings, WebAcmeCertificateStatus, WebSecurityBanRecord } from './types'
 import {
   formatBanSource,
   formatBanTime,
@@ -40,9 +40,25 @@ interface SettingsWebAccessSectionProps {
   securityBansLoading: boolean
   securityBansError: string
   unbanningIp: string | null
+  acmeCertificateStatus: WebAcmeCertificateStatus | null
+  acmeCertificateStatusLoading: boolean
+  acmeCertificateStatusError: string
   directoryPicker: (field: 'webReverseProxyOpenRestyPath', label: string, disabled?: boolean) => ReactNode
   onLoadSecurityBans: () => void
   onUnbanSecurityIp: (ip: string) => void
+  onRefreshAcmeCertificateStatus: () => void
+}
+
+function formatUnixTime(value: number | null | undefined) {
+  if (!value) return '未知'
+  return new Date(value * 1000).toLocaleString()
+}
+
+function formatDaysRemaining(expiresAtUnix: number) {
+  const days = Math.ceil((expiresAtUnix * 1000 - Date.now()) / 86_400_000)
+  if (days < 0) return `已过期 ${Math.abs(days)} 天`
+  if (days === 0) return '今天到期'
+  return `剩余 ${days} 天`
 }
 
 export default function SettingsWebAccessSection({
@@ -62,9 +78,13 @@ export default function SettingsWebAccessSection({
   securityBansLoading,
   securityBansError,
   unbanningIp,
+  acmeCertificateStatus,
+  acmeCertificateStatusLoading,
+  acmeCertificateStatusError,
   directoryPicker,
   onLoadSecurityBans,
   onUnbanSecurityIp,
+  onRefreshAcmeCertificateStatus,
 }: SettingsWebAccessSectionProps) {
   return (
     <section className="settings-card settings-card--full">
@@ -223,6 +243,46 @@ export default function SettingsWebAccessSection({
           <Form.Item name="webAcmeAutoIssueEnabled" valuePropName="checked">
             <Switch disabled={httpsSettingsDisabled} />
           </Form.Item>
+        </div>
+        <div className="settings-acme-status-card">
+          <div className="settings-acme-status-card__head">
+            <div>
+              <strong>证书状态</strong>
+              <span>已存在证书时显示证书到期时间与下一次自动续期时间</span>
+            </div>
+            <Button icon={<ReloadOutlined />} loading={acmeCertificateStatusLoading} onClick={onRefreshAcmeCertificateStatus} size="small">
+              刷新
+            </Button>
+          </div>
+          {acmeCertificateStatusError ? (
+            <Text type="secondary">证书状态暂不可用：{acmeCertificateStatusError}</Text>
+          ) : acmeCertificateStatus ? (
+            <div className="settings-acme-status-grid">
+              <div>
+                <Text type="secondary">域名</Text>
+                <Text code>{acmeCertificateStatus.domain}</Text>
+              </div>
+              <div>
+                <Text type="secondary">证书到期时间</Text>
+                <Space wrap size={6}>
+                  <Text>{formatUnixTime(acmeCertificateStatus.expiresAtUnix)}</Text>
+                  <Tag color={acmeCertificateStatus.expiresAtUnix * 1000 <= Date.now() ? 'red' : 'green'}>
+                    {formatDaysRemaining(acmeCertificateStatus.expiresAtUnix)}
+                  </Tag>
+                </Space>
+              </div>
+              <div>
+                <Text type="secondary">下次续期时间</Text>
+                <Text>{formatUnixTime(acmeCertificateStatus.renewAfterUnix)}</Text>
+              </div>
+              <div>
+                <Text type="secondary">签发时间</Text>
+                <Text>{formatUnixTime(acmeCertificateStatus.issuedAtUnix)}</Text>
+              </div>
+            </div>
+          ) : (
+            <Text type="secondary">暂无已签发证书。保存并成功完成 Let's Encrypt 自动申请后，会在这里显示到期与续期时间。</Text>
+          )}
         </div>
         <Form.Item
           label="ACME 目录地址"

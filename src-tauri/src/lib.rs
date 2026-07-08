@@ -73,6 +73,7 @@ mod web_server;
 mod web_server_auth;
 mod window_controls;
 mod window_hotkey;
+mod windows_firewall;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 
@@ -134,6 +135,7 @@ pub fn run() {
             settings_commands::get_settings,
             settings_commands::save_settings,
             settings_commands::list_web_security_bans,
+            settings_commands::get_web_acme_certificate_status,
             settings_commands::unban_web_security_ip,
             instance_query_commands::list_instances,
             instance_query_commands::clear_startup_auto_update_skip_flags,

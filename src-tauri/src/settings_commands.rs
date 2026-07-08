@@ -7,8 +7,9 @@ pub(crate) use public_view::public_settings;
 pub(crate) use save::prepare_settings_for_save;
 
 use crate::{
-    app_state::AppRuntime, models::GlobalSettings, reverse_proxy,
-    sync_events::SETTINGS_CHANGED_EVENT, web_server, window_controls,
+    app_state::AppRuntime, command_events::emit_instance_log, models::GlobalSettings,
+    reverse_proxy, sync_events::SETTINGS_CHANGED_EVENT, web_server, window_controls,
+    windows_firewall,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -34,6 +35,11 @@ pub fn list_web_security_bans(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+pub fn get_web_acme_certificate_status(runtime: State<'_, AppRuntime>) -> Result<Value, String> {
+    get_web_acme_certificate_status_for_runtime(runtime.inner())
+}
+
+#[tauri::command]
 pub fn unban_web_security_ip(app: AppHandle, ip: String) -> Result<Value, String> {
     unban_web_security_ip_for_app(&app, &ip)
 }
@@ -45,13 +51,36 @@ pub(crate) fn save_settings_for_runtime(
 ) -> Result<Value, String> {
     let settings = save::merge_settings_update(runtime, settings)?;
     validation::validate_settings(&settings)?;
+    let firewall_rules = windows_firewall::ensure_web_firewall_rules(&settings)?;
     let saved = runtime.save_settings(settings)?;
+    if !firewall_rules.is_empty() {
+        let _ = emit_instance_log(
+            app,
+            runtime,
+            "Windows防火墙",
+            "success",
+            &format!(
+                "Web 访问 Windows 防火墙规则已确认：{}",
+                windows_firewall::format_rule_summaries(&firewall_rules)
+            ),
+        );
+    }
     publish_settings_changed(app, saved.clone())?;
     public_settings(saved)
 }
 
 pub(crate) fn list_web_security_bans_for_app(app: &AppHandle) -> Result<Value, String> {
     to_json(reverse_proxy::list_security_bans_from_app(app)?)
+}
+
+pub(crate) fn get_web_acme_certificate_status_for_runtime(
+    runtime: &AppRuntime,
+) -> Result<Value, String> {
+    let settings = runtime.settings()?;
+    to_json(reverse_proxy::read_acme_certificate_status(
+        runtime.data_dir(),
+        &settings,
+    )?)
 }
 
 pub(crate) fn unban_web_security_ip_for_app(app: &AppHandle, ip: &str) -> Result<Value, String> {

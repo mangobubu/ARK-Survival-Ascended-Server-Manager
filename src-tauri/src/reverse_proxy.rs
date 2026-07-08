@@ -1,7 +1,7 @@
 mod config_runtime;
 
 use crate::{
-    acme_certificate::{self, WebCertificatePaths},
+    acme_certificate::{self, WebAcmeCertificateStatus, WebCertificatePaths},
     app_state::AppRuntime,
     models::{GlobalSettings, WebIpWhitelistEntry, WebSecurityBanRecord, WebSecurityUnbanResult},
     reverse_proxy_admin::normalize_admin_ip,
@@ -42,6 +42,7 @@ struct ReverseProxyConfig {
 impl ReverseProxyManager {
     pub fn apply_settings(
         &self,
+        app: &AppHandle,
         runtime: &AppRuntime,
         settings: &GlobalSettings,
     ) -> Result<(), String> {
@@ -51,7 +52,8 @@ impl ReverseProxyManager {
         }
 
         validate_settings(settings)?;
-        let desired = ReverseProxyConfig::from_settings(&runtime.data_dir(), settings)?;
+        let desired =
+            ReverseProxyConfig::from_settings(app, runtime, &runtime.data_dir(), settings)?;
         let already_active = self
             .active
             .lock()
@@ -119,7 +121,7 @@ pub fn apply_settings_from_app(app: &AppHandle, settings: &GlobalSettings) -> Re
     let manager = app
         .try_state::<ReverseProxyManager>()
         .ok_or_else(|| "Web 反向代理管理器尚未初始化".to_string())?;
-    manager.apply_settings(&runtime, settings)
+    manager.apply_settings(app, &runtime, settings)
 }
 
 pub fn shutdown(app: &AppHandle) {
@@ -143,6 +145,18 @@ pub fn unban_security_ip_from_app(
         .try_state::<ReverseProxyManager>()
         .ok_or_else(|| "Web 反向代理管理器尚未初始化".to_string())?;
     manager.unban_security_ip(ip)
+}
+
+pub fn read_acme_certificate_status(
+    data_dir: PathBuf,
+    settings: &GlobalSettings,
+) -> Result<Option<WebAcmeCertificateStatus>, String> {
+    if settings.web_reverse_proxy_domain.trim().is_empty() {
+        return Ok(None);
+    }
+    let domain = normalize_domain(&settings.web_reverse_proxy_domain)?;
+    let cert_dir = data_dir.join(PROXY_ROOT_DIR_NAME).join(CERTS_RELATIVE_DIR);
+    acme_certificate::read_web_certificate_status(&cert_dir, &domain)
 }
 
 pub fn is_request_host_allowed(settings: &GlobalSettings, request_host: Option<&str>) -> bool {

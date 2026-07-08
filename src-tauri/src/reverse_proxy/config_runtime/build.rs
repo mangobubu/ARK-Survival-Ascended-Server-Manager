@@ -1,15 +1,19 @@
 use std::path::Path;
 
 use crate::{
-    acme_certificate, models::GlobalSettings, reverse_proxy_host::normalize_domain,
+    acme_certificate, app_state::AppRuntime, command_events::emit_instance_log,
+    models::GlobalSettings, reverse_proxy_host::normalize_domain,
     reverse_proxy_ip_whitelist::normalize_ip_whitelist_entries,
     reverse_proxy_runtime::resolve_openresty_executable_path,
 };
+use tauri::AppHandle;
 
 use super::super::{CERTS_RELATIVE_DIR, PROXY_ROOT_DIR_NAME, ReverseProxyConfig};
 
 impl ReverseProxyConfig {
     pub(in crate::reverse_proxy) fn from_settings(
+        app: &AppHandle,
+        runtime: &AppRuntime,
         data_dir: &Path,
         settings: &GlobalSettings,
     ) -> Result<Self, String> {
@@ -33,15 +37,24 @@ impl ReverseProxyConfig {
             login_failure_ban_seconds: settings.web_login_failure_ban_seconds,
             ip_whitelist: normalize_ip_whitelist_entries(&settings.web_ip_whitelist),
         }
-        .with_certificate_paths(settings)
+        .with_certificate_paths(app, runtime, settings)
     }
 
-    fn with_certificate_paths(mut self, settings: &GlobalSettings) -> Result<Self, String> {
+    fn with_certificate_paths(
+        mut self,
+        app: &AppHandle,
+        runtime: &AppRuntime,
+        settings: &GlobalSettings,
+    ) -> Result<Self, String> {
         if self.https_enabled {
+            let log_sink = |level: &str, message: &str| {
+                let _ = emit_instance_log(app, runtime, "ACME证书", level, message);
+            };
             self.certificate_paths = Some(acme_certificate::ensure_certificate_files(
                 &self.proxy_root_path.join(CERTS_RELATIVE_DIR),
                 &self.domain,
                 settings,
+                Some(&log_sink),
             )?);
         }
         Ok(self)

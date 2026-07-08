@@ -440,6 +440,7 @@ fn mock_acme_dns01_完整签发流程会创建并清理腾讯云_txt_记录() {
         &paths,
         &dns_provider,
         Duration::ZERO,
+        None,
     )
     .expect("mock ACME 签发成功");
     server.finish();

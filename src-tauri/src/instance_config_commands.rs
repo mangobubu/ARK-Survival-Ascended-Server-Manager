@@ -1,10 +1,11 @@
 use crate::{
     app_state::{AppRuntime, normalize_required_rcon_config},
     ark_config,
+    command_events::emit_instance_log,
     models::{ModItem, ServerInstance},
     server_version::with_current_server_version,
     sync_events::{INSTANCE_CONFIG_CHANGED_EVENT, INSTANCES_CHANGED_EVENT},
-    window_controls,
+    window_controls, windows_firewall,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -34,6 +35,7 @@ pub(crate) fn save_config_for_runtime(
     let config = normalize_required_rcon_config(config)?;
     let instance = runtime.save_config_and_mods(instance_id, config.clone(), mods.clone())?;
     let applied = ark_config::apply_instance_config(&instance, &config, &mods)?;
+    let firewall_rules = windows_firewall::ensure_instance_firewall_rules(&instance)?;
     runtime.add_log(
         &instance.name,
         "success",
@@ -46,6 +48,18 @@ pub(crate) fn save_config_for_runtime(
             applied.launch_arguments.len()
         ),
     )?;
+    if !firewall_rules.is_empty() {
+        let _ = emit_instance_log(
+            app,
+            runtime,
+            &instance.name,
+            "success",
+            &format!(
+                "Windows 防火墙规则已确认：{}",
+                windows_firewall::format_rule_summaries(&firewall_rules)
+            ),
+        );
+    }
     publish_instance_config_changed(app, runtime, instance_id)?;
     publish_instances_changed(app);
     Ok(instance)

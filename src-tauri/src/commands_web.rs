@@ -29,6 +29,7 @@ pub(crate) async fn handle_web_invoke(
         "get_settings" => settings::get_settings(&runtime),
         "save_settings" => settings::save_settings(&app, &runtime, &args),
         "list_web_security_bans" => settings::list_web_security_bans(&app),
+        "get_web_acme_certificate_status" => settings::get_web_acme_certificate_status(&runtime),
         "unban_web_security_ip" => settings::unban_web_security_ip(&app, &args),
         "list_instances" => instances::list_instances(&runtime),
         "clear_startup_auto_update_skip_flags" => {

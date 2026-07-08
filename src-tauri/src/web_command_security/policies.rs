@@ -23,6 +23,11 @@ const WEB_COMMAND_POLICIES: &[WebCommandPolicy] = &[
         "读取 Web 安全封禁列表",
         WebCommandRisk::Read,
     ),
+    policy(
+        "get_web_acme_certificate_status",
+        "读取 Web ACME 证书状态",
+        WebCommandRisk::Read,
+    ),
     policy("list_instances", "读取实例列表", WebCommandRisk::Read),
     policy("check_instance_port", "检查实例端口", WebCommandRisk::Read),
     policy(

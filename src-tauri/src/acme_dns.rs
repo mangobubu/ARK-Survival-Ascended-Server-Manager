@@ -1,4 +1,5 @@
 use crate::{
+    acme_certificate::AcmeLogSink,
     acme_client::AcmeClient,
     acme_crypto::dns01_txt_value,
     tencent_dns::{self, TencentDnsCredential, TencentDnsRecord},
@@ -56,9 +57,11 @@ pub(crate) fn perform_dns_authorization(
     domain: &str,
     authorization_url: &str,
     dns_propagation_wait: Duration,
+    log_sink: Option<&AcmeLogSink<'_>>,
 ) -> Result<(), String> {
     let authorization = client.get_authorization(authorization_url)?;
     if authorization.status == "valid" {
+        acme_log(log_sink, "info", "ACME DNS-01 授权已有效，跳过重复验证");
         return Ok(());
     }
     if authorization.status == "invalid" {
@@ -78,6 +81,11 @@ pub(crate) fn perform_dns_authorization(
         .ok_or_else(|| "ACME 授权中未找到可用的 dns-01 Challenge".to_string())?;
     let txt_value = dns01_txt_value(&challenge.token, &client.account_thumbprint);
     let (dns_domain, sub_domain) = tencent_dns::acme_challenge_record_for_domain(domain)?;
+    acme_log(
+        log_sink,
+        "info",
+        &format!("正在创建腾讯云 DNS TXT 记录：{sub_domain}.{dns_domain}"),
+    );
     let record = dns_provider.create_txt_record(
         &dns_domain,
         &sub_domain,
@@ -90,7 +98,9 @@ pub(crate) fn perform_dns_authorization(
         authorization_url,
         &challenge.url,
         dns_propagation_wait,
+        log_sink,
     );
+    acme_log(log_sink, "info", "正在清理腾讯云 DNS TXT 验证记录");
     let cleanup_result = cleanup_dns_record(dns_provider, record);
     match (result, cleanup_result) {
         (Ok(()), _) => Ok(()),
@@ -106,11 +116,22 @@ fn complete_dns_authorization(
     authorization_url: &str,
     challenge_url: &str,
     dns_propagation_wait: Duration,
+    log_sink: Option<&AcmeLogSink<'_>>,
 ) -> Result<(), String> {
     if !dns_propagation_wait.is_zero() {
+        acme_log(
+            log_sink,
+            "info",
+            &format!(
+                "等待 DNS TXT 记录传播 {} 秒",
+                dns_propagation_wait.as_secs()
+            ),
+        );
         thread::sleep(dns_propagation_wait);
     }
+    acme_log(log_sink, "info", "正在提交 ACME dns-01 Challenge");
     client.accept_challenge(challenge_url)?;
+    acme_log(log_sink, "info", "正在轮询 ACME dns-01 授权状态");
     client.poll_authorization(authorization_url)
 }
 
@@ -119,4 +140,10 @@ fn cleanup_dns_record(
     record: TencentDnsRecord,
 ) -> Result<(), String> {
     dns_provider.delete_record(&record.domain, record.id)
+}
+
+fn acme_log(log_sink: Option<&AcmeLogSink<'_>>, level: &str, message: &str) {
+    if let Some(log_sink) = log_sink {
+        log_sink(level, message);
+    }
 }

@@ -1204,6 +1204,50 @@ button, input, textarea { font: inherit; }
   grid-column: 1 / -1;
 }
 
+.settings-acme-status-card {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(46, 204, 113, .26);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(4, 40, 32, .58), rgba(2, 14, 24, .62));
+}
+
+.settings-acme-status-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-acme-status-card__head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-acme-status-card__head strong { color: #d8f8e5; }
+.settings-acme-status-card__head span { color: #80a797; font-size: 12px; }
+
+.settings-acme-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.settings-acme-status-grid > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 10px;
+  border: 1px solid rgba(35, 112, 82, .62);
+  border-radius: 7px;
+  background: rgba(2, 18, 19, .48);
+}
+
 .settings-web-whitelist-editor,
 .settings-web-ban-panel {
   grid-column: 1 / -1;
@@ -1698,6 +1742,7 @@ html.theme-light .settings-web-port-note,
 html.theme-light .settings-web-auth-note,
 html.theme-light .settings-web-proxy-note,
 html.theme-light .settings-web-captcha-note,
+html.theme-light .settings-acme-status-card,
 html.theme-light .settings-web-whitelist-editor,
 html.theme-light .settings-web-ban-panel {
   border-color: #c9d9e6;
@@ -1770,6 +1815,16 @@ html.theme-light .settings-web-captcha-note {
   color: #53677a;
 }
 
+html.theme-light .settings-acme-status-card {
+  border-color: #bfe7cf;
+  background: linear-gradient(135deg, #f4fff8, #eefaf3);
+}
+
+html.theme-light .settings-acme-status-grid > div {
+  border-color: #d1eadb;
+  background: #fbfffd;
+}
+
 html.theme-light .settings-web-whitelist-row {
   border-color: #d5e3ef;
   background: #f8fbff;
@@ -1781,11 +1836,13 @@ html.theme-light .settings-web-ban-row {
 }
 
 html.theme-light .settings-web-whitelist-editor__head strong,
+html.theme-light .settings-acme-status-card__head strong,
 html.theme-light .settings-web-ban-panel__head strong {
   color: #172433;
 }
 
 html.theme-light .settings-web-whitelist-editor__head span,
+html.theme-light .settings-acme-status-card__head span,
 html.theme-light .settings-web-ban-panel__head span,
 html.theme-light .settings-web-ban-row p {
   color: #5d7082;

@@ -19,6 +19,15 @@ export interface WebSecurityUnbanResult {
   existed: boolean
 }
 
+export interface WebAcmeCertificateStatus {
+  domain: string
+  issuedAtUnix: number | null
+  renewAfterUnix: number
+  expiresAtUnix: number
+  fullchainPem: string
+  privateKeyPem: string
+}
+
 export type AsaConfigTarget =
   | 'managerOnly'
   | 'launchArgument'

@@ -14,11 +14,11 @@ import {
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Button, Form, Input, InputNumber, Popover, Radio, Select, Space, Switch, Tag, Typography, message } from 'antd'
-import { checkSteamCmd, listWebSecurityBans, unbanWebSecurityIp } from './backendApi'
+import { checkSteamCmd, getWebAcmeCertificateStatus, listWebSecurityBans, unbanWebSecurityIp } from './backendApi'
 import { loadGlobalSettings, loadGlobalSettingsFromBackend, saveGlobalSettings } from './globalSettings'
 import { isTauriRuntime } from './runtime'
 import SettingsWebAccessSection from './SettingsWebAccessSection'
-import type { GlobalSettings, WebSecurityBanRecord } from './types'
+import type { GlobalSettings, WebAcmeCertificateStatus, WebSecurityBanRecord } from './types'
 import {
   closeBehaviorOptions,
   formatShortcutKey,
@@ -46,6 +46,9 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps = {}) {
   const [securityBansLoading, setSecurityBansLoading] = useState(false)
   const [securityBansError, setSecurityBansError] = useState('')
   const [unbanningIp, setUnbanningIp] = useState<string | null>(null)
+  const [acmeCertificateStatus, setAcmeCertificateStatus] = useState<WebAcmeCertificateStatus | null>(null)
+  const [acmeCertificateStatusLoading, setAcmeCertificateStatusLoading] = useState(false)
+  const [acmeCertificateStatusError, setAcmeCertificateStatusError] = useState('')
   const watchedWebManagementEnabled = Form.useWatch('webManagementEnabled', form) ?? settings.webManagementEnabled
   const watchedWebPort = Form.useWatch('webServerPort', form) ?? settings.webServerPort
   const watchedReverseProxyEnabled = Form.useWatch('webReverseProxyEnabled', form) ?? settings.webReverseProxyEnabled
@@ -89,6 +92,19 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps = {}) {
       setSecurityBans([])
     } finally {
       setSecurityBansLoading(false)
+    }
+  }, [])
+
+  const loadAcmeCertificateStatus = useCallback(async () => {
+    setAcmeCertificateStatusLoading(true)
+    setAcmeCertificateStatusError('')
+    try {
+      setAcmeCertificateStatus(await getWebAcmeCertificateStatus())
+    } catch (error) {
+      setAcmeCertificateStatus(null)
+      setAcmeCertificateStatusError(String(error))
+    } finally {
+      setAcmeCertificateStatusLoading(false)
     }
   }, [])
 
@@ -180,6 +196,10 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps = {}) {
   useEffect(() => {
     void loadSecurityBans()
   }, [loadSecurityBans])
+
+  useEffect(() => {
+    void loadAcmeCertificateStatus()
+  }, [loadAcmeCertificateStatus])
 
   const selectDirectory = async (field: DirectorySettingField, label: string) => {
     setSelectingPath(field)
@@ -401,9 +421,13 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps = {}) {
               securityBansLoading={securityBansLoading}
               securityBansError={securityBansError}
               unbanningIp={unbanningIp}
+              acmeCertificateStatus={acmeCertificateStatus}
+              acmeCertificateStatusLoading={acmeCertificateStatusLoading}
+              acmeCertificateStatusError={acmeCertificateStatusError}
               directoryPicker={directoryPicker}
               onLoadSecurityBans={() => void loadSecurityBans()}
               onUnbanSecurityIp={(ip) => void handleUnbanSecurityIp(ip)}
+              onRefreshAcmeCertificateStatus={() => void loadAcmeCertificateStatus()}
             />
 
           </div>

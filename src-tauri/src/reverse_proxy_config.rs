@@ -94,7 +94,9 @@ http {{
         location = /__asa_security/bans {{
             allow 127.0.0.1;
             deny all;
-            access_by_lua_block {{}}
+            access_by_lua_block {{
+                ngx.ctx.asa_security_admin_endpoint = true
+            }}
             content_by_lua_block {{
                 require("asa_security").admin_bans()
             }}
@@ -103,7 +105,9 @@ http {{
         location = /__asa_security/unban {{
             allow 127.0.0.1;
             deny all;
-            access_by_lua_block {{}}
+            access_by_lua_block {{
+                ngx.ctx.asa_security_admin_endpoint = true
+            }}
             content_by_lua_block {{
                 require("asa_security").admin_unban()
             }}

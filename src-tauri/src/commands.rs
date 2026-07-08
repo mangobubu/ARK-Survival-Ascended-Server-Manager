@@ -6,7 +6,9 @@ pub(crate) use open_paths::open_directory;
 
 use crate::{
     app_state::AppRuntime,
-    command_events::{publish_instances_changed, publish_sync_event_best_effort},
+    command_events::{
+        emit_instance_log, publish_instances_changed, publish_sync_event_best_effort,
+    },
     instance_config_commands,
     models::{
         AddInstancePayload, JobProgress, LogLine, LogSource, ModItem, ServerInstance, ServerLogKind,
@@ -21,6 +23,7 @@ use crate::{
     sync_events::{
         ADD_INSTANCE_CREATED_EVENT, INSTANCE_DELETED_EVENT, LOGS_CLEARED_EVENT, LOGS_RESET_EVENT,
     },
+    windows_firewall,
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -44,6 +47,19 @@ pub fn create_instance(
     let instance = runtime
         .create_instance(payload)
         .map(with_current_server_version)?;
+    let firewall_rules = windows_firewall::ensure_instance_firewall_rules(&instance)?;
+    if !firewall_rules.is_empty() {
+        let _ = emit_instance_log(
+            &app,
+            runtime.inner(),
+            &instance.name,
+            "success",
+            &format!(
+                "Windows 防火墙规则已确认：{}",
+                windows_firewall::format_rule_summaries(&firewall_rules)
+            ),
+        );
+    }
     publish_sync_event_best_effort(
         &app,
         ADD_INSTANCE_CREATED_EVENT,

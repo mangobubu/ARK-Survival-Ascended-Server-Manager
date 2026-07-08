@@ -49,6 +49,10 @@ pub(super) fn list_web_security_bans(app: &AppHandle) -> Result<Value, String> {
     settings_commands::list_web_security_bans_for_app(app)
 }
 
+pub(super) fn get_web_acme_certificate_status(runtime: &AppRuntime) -> Result<Value, String> {
+    settings_commands::get_web_acme_certificate_status_for_runtime(runtime)
+}
+
 pub(super) fn unban_web_security_ip(app: &AppHandle, args: &Value) -> Result<Value, String> {
     settings_commands::unban_web_security_ip_for_app(app, &required_arg::<String>(args, "ip")?)
 }
