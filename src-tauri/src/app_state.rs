@@ -6,6 +6,7 @@ use crate::{
         settings_config_path, write_data,
     },
     models::{GlobalSettings, LogLine, ModItem, ServerInstance},
+    rcon_players::RconPlayer,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,6 +21,7 @@ use tauri::AppHandle;
 mod instances;
 mod logs;
 mod paths;
+mod player_presence;
 mod runtime_tasks;
 mod time;
 
@@ -33,6 +35,7 @@ pub struct AppRuntime {
     data: Arc<Mutex<ManagerData>>,
     processes: Arc<Mutex<HashMap<String, Child>>>,
     update_cancels: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    online_players: Arc<Mutex<HashMap<String, Vec<RconPlayer>>>>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -69,6 +72,7 @@ impl AppRuntime {
             data: Arc::new(Mutex::new(data)),
             processes: Arc::new(Mutex::new(HashMap::new())),
             update_cancels: Arc::new(Mutex::new(HashMap::new())),
+            online_players: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 

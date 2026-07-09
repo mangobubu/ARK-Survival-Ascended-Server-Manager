@@ -3,10 +3,11 @@
 ## v0.3.7
 
 - 新增 ASA 服务端玩家进退服日志识别，将 `joined this ARK`、`joined the server`、`Join succeeded`、`left this ARK`、`logged out` 等服务端日志事件转写到集群“应用日志”页签。
+- 新增基于 RCON `ListPlayers` 的在线玩家名单快照差异检测，不再只依赖 ASA 原始游戏日志文本，玩家加入或退出会在下一次状态轮询后稳定写入应用日志。
 - 应用日志现在会按现有格式显示 `[时间] [实例名] 玩家名 加入了服务器 / 退出了服务器`，便于在集群视角快速追踪玩家进入与登出。
-- 抽离 `server_player_events` 解析模块并补充中英文玩家名、引号玩家名、Join succeeded 与无关日志过滤单元测试，避免把普通 ASA 服务端日志误判为玩家事件。
+- 抽离 `server_player_events` 解析模块并补充 RCON 玩家列表解析、在线玩家差异快照、中英文玩家名、引号玩家名、Join succeeded 与无关日志过滤单元测试，避免把普通 ASA 服务端日志误判为玩家事件。
 - 保持服务端窗口日志与游戏日志文件原始输出不变，仅额外生成面向管理员阅读的应用日志，降低改动范围并避免破坏现有实例日志面板。
-- 完成 `cargo test --manifest-path src-tauri\Cargo.toml`、`npm run build` 与本地 Vite 预览浏览器验证，确认构建、后端测试和 Web 登录页加载无回归。
+- 完成 `cargo clippy --manifest-path src-tauri\Cargo.toml --all-targets -- -D warnings`、`cargo test --manifest-path src-tauri\Cargo.toml`、`npm run build`、`npm run check:config-metadata` 与本地 Vite 预览浏览器验证，确认构建、后端测试和 Web 登录页加载无回归。
 - 同步项目版本号至 `0.3.7`，确保前端页脚、Tauri 配置、Cargo 包信息、锁文件和发布标签版本一致。
 
 ## v0.3.6

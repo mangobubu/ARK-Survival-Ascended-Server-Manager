@@ -3,7 +3,7 @@ use crate::{
     command_events::emit_instance_log,
     models::{ServerInstance, ServerStatus},
     rcon,
-    rcon_players::parse_list_players_count,
+    rcon_players::{RconPlayer, parse_list_players, parse_list_players_count},
 };
 use serde_json::Value;
 use std::time::Duration;
@@ -76,10 +76,13 @@ pub(crate) async fn execute_rcon_command(
 }
 
 pub(crate) async fn refresh_instance_players(
+    app: &AppHandle,
     runtime: &AppRuntime,
     instance: ServerInstance,
 ) -> Result<ServerInstance, String> {
     if matches!(instance.status, ServerStatus::Stopped | ServerStatus::Error) {
+        let left_players = runtime.clear_online_players(&instance.id)?;
+        emit_player_left_logs(app, runtime, &instance.name, &left_players);
         return if instance.players == 0 {
             Ok(instance)
         } else {
@@ -115,7 +118,12 @@ pub(crate) async fn refresh_instance_players(
     .await
     {
         Ok(Ok(response)) => {
-            runtime.update_instance_players(&instance.id, parse_list_players_count(&response))
+            let players = parse_list_players(&response);
+            let player_count = players.len() as u32;
+            let changes = runtime.reconcile_online_players(&instance.id, players)?;
+            emit_player_join_logs(app, runtime, &instance.name, &changes.joined);
+            emit_player_left_logs(app, runtime, &instance.name, &changes.left);
+            runtime.update_instance_players(&instance.id, player_count)
         }
         Ok(Err(_)) | Err(_) => Ok(instance),
     }
@@ -158,6 +166,40 @@ fn u16_from_config(config: &Value, key: &str, fallback: u16) -> u16 {
         .and_then(Value::as_u64)
         .and_then(|value| u16::try_from(value).ok())
         .unwrap_or(fallback)
+}
+
+fn emit_player_join_logs(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance_name: &str,
+    players: &[RconPlayer],
+) {
+    for player in players {
+        let _ = emit_instance_log(
+            app,
+            runtime,
+            instance_name,
+            "success",
+            &format!("{} 加入了服务器", player.name),
+        );
+    }
+}
+
+fn emit_player_left_logs(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance_name: &str,
+    players: &[RconPlayer],
+) {
+    for player in players {
+        let _ = emit_instance_log(
+            app,
+            runtime,
+            instance_name,
+            "info",
+            &format!("{} 退出了服务器", player.name),
+        );
+    }
 }
 
 #[cfg(test)]

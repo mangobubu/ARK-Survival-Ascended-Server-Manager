@@ -10,7 +10,7 @@ use crate::{
         SharedServerLogDeduper, classify_server_log_level, should_skip_duplicate_server_log,
     },
     server_log_events::emit_server_log,
-    server_player_events::parse_player_server_event,
+    server_player_events::{PlayerServerEventKind, parse_player_server_event},
     server_version::{parse_asa_server_version, with_current_server_version},
     sync_events::INSTANCE_STATUS_EVENT,
 };
@@ -149,6 +149,19 @@ fn handle_server_log_line(
         server_log_kind,
     );
     if let Some(player_event) = parse_player_server_event(line) {
+        let should_emit = match player_event.kind {
+            PlayerServerEventKind::Joined => context
+                .runtime
+                .record_player_joined_name(context.instance_id, &player_event.player_name)
+                .unwrap_or(true),
+            PlayerServerEventKind::Left => context
+                .runtime
+                .record_player_left_name(context.instance_id, &player_event.player_name)
+                .unwrap_or(true),
+        };
+        if !should_emit {
+            return;
+        }
         let _ = emit_instance_log(
             context.app,
             context.runtime,

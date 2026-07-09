@@ -18,6 +18,7 @@ fn test_runtime(data_dir: &Path) -> AppRuntime {
         data: Arc::new(Mutex::new(ManagerData::default())),
         processes: Arc::new(Mutex::new(HashMap::new())),
         update_cancels: Arc::new(Mutex::new(HashMap::new())),
+        online_players: Arc::new(Mutex::new(HashMap::new())),
     }
 }
 

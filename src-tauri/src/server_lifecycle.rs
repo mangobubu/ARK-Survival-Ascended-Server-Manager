@@ -158,7 +158,7 @@ pub(crate) async fn refresh_status_for_runtime(
         return Ok(updated);
     }
     let instance = runtime.get_instance(instance_id)?;
-    server_rcon::refresh_instance_players(runtime, instance)
+    server_rcon::refresh_instance_players(app, runtime, instance)
         .await
         .map(with_current_server_version)
 }
