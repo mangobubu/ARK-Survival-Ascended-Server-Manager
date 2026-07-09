@@ -419,3 +419,20 @@ export interface ImportedServerConfigPreview {
   foundFiles: string[]
   warnings: string[]
 }
+
+export interface HostDirectoryEntry {
+  name: string
+  path: string
+  hasChildren: boolean
+  serverConfigDetected: boolean
+  serverExecutableDetected: boolean
+}
+
+export interface HostDirectoryListing {
+  rootPath: string
+  currentPath: string
+  parentPath: string | null
+  entries: HostDirectoryEntry[]
+  totalEntries: number
+  truncated: boolean
+}

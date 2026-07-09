@@ -18,6 +18,13 @@ pub(super) fn read_server_directory_config(
     )
 }
 
+pub(super) fn list_host_directories(runtime: &AppRuntime, args: &Value) -> Result<Value, String> {
+    to_json(instance_data_commands::list_host_directories_for_runtime(
+        runtime,
+        super::support::optional_arg(args, "path")?,
+    )?)
+}
+
 pub(super) fn get_instance_config(runtime: &AppRuntime, args: &Value) -> Result<Value, String> {
     to_json(instance_config_commands::get_instance_config_for_runtime(
         runtime,

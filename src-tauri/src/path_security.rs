@@ -56,7 +56,7 @@ fn canonicalize_existing_path(path: &Path) -> Result<PathBuf, String> {
     std::fs::canonicalize(path).map_err(|error| format!("无法解析路径 {}：{error}", path.display()))
 }
 
-fn path_starts_with_case_insensitive(path: &Path, root: &Path) -> bool {
+pub(crate) fn path_starts_with_case_insensitive(path: &Path, root: &Path) -> bool {
     let path_text = path.to_string_lossy().to_ascii_lowercase();
     let root_exact = root.to_string_lossy().to_ascii_lowercase();
     let mut root_prefix = root_exact.clone();

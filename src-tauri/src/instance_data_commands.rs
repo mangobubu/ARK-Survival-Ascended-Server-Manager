@@ -1,6 +1,6 @@
 use crate::{
     app_state::AppRuntime,
-    backup, import_export, instance_config_import,
+    backup, host_directory_browser, import_export, instance_config_import,
     models::{BackupItem, ExportResult, ImportResult, ImportedServerConfigPreview},
     path_security,
     sync_events::INSTANCES_CHANGED_EVENT,
@@ -16,6 +16,13 @@ pub(crate) fn read_server_directory_config_for_runtime(
 ) -> Result<ImportedServerConfigPreview, String> {
     let path = path_security::ensure_managed_path_allowed(runtime, Path::new(&path))?;
     instance_config_import::read_server_directory_config(&path)
+}
+
+pub(crate) fn list_host_directories_for_runtime(
+    runtime: &AppRuntime,
+    path: Option<String>,
+) -> Result<host_directory_browser::HostDirectoryListing, String> {
+    host_directory_browser::list_host_directories(runtime, path)
 }
 
 pub(crate) fn create_backup_for_runtime(
@@ -99,6 +106,14 @@ pub fn read_server_directory_config(
     path: String,
 ) -> Result<ImportedServerConfigPreview, String> {
     read_server_directory_config_for_runtime(runtime.inner(), path)
+}
+
+#[tauri::command]
+pub fn list_host_directories(
+    runtime: State<'_, AppRuntime>,
+    path: Option<String>,
+) -> Result<host_directory_browser::HostDirectoryListing, String> {
+    list_host_directories_for_runtime(runtime.inner(), path)
 }
 
 #[tauri::command]

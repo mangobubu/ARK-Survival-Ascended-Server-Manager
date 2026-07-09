@@ -6,6 +6,7 @@ import type {
   BackupItem,
   ExportResult,
   GlobalSettings,
+  HostDirectoryListing,
   ImportResult,
   ImportedServerConfigPreview,
   InstancePortKind,
@@ -207,6 +208,9 @@ export const createInstance = (payload: AddInstancePayload) => invokeCommand<Ser
 
 export const readServerDirectoryConfig = (path: string) =>
   invokeCommand<ImportedServerConfigPreview>('read_server_directory_config', { path })
+
+export const listHostDirectories = (path?: string | null) =>
+  invokeCommand<HostDirectoryListing>('list_host_directories', { path: path ?? null })
 
 export const getInstanceConfig = (instanceId: string) => invokeCommand<Partial<ServerConfig>>('get_instance_config', { instanceId })
 

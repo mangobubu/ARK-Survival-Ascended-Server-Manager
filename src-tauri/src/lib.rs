@@ -22,6 +22,7 @@ mod backup;
 mod command_events;
 mod commands;
 mod commands_web;
+mod host_directory_browser;
 mod import_export;
 mod instance_config_commands;
 mod instance_config_import;
@@ -142,6 +143,7 @@ pub fn run() {
             instance_query_commands::check_instance_port,
             commands::create_instance,
             instance_data_commands::read_server_directory_config,
+            instance_data_commands::list_host_directories,
             instance_config_commands::get_instance_config,
             instance_config_commands::get_instance_mods,
             instance_config_commands::save_instance_config,

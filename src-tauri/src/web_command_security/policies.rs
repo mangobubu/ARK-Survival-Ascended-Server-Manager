@@ -35,6 +35,11 @@ const WEB_COMMAND_POLICIES: &[WebCommandPolicy] = &[
         "读取服务端目录配置",
         WebCommandRisk::Read,
     ),
+    policy(
+        "list_host_directories",
+        "浏览运行主机服务器目录",
+        WebCommandRisk::Read,
+    ),
     policy("get_instance_config", "读取实例配置", WebCommandRisk::Read),
     policy(
         "get_instance_mods",

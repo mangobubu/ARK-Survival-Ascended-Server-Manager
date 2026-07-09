@@ -38,6 +38,7 @@ pub(crate) async fn handle_web_invoke(
         "check_instance_port" => instances::check_instance_port(&runtime, &args),
         "create_instance" => instances::create_instance(&app, &runtime, &args),
         "read_server_directory_config" => config::read_server_directory_config(&runtime, &args),
+        "list_host_directories" => config::list_host_directories(&runtime, &args),
         "get_instance_config" => config::get_instance_config(&runtime, &args),
         "get_instance_mods" => config::get_instance_mods(&runtime, &args),
         "save_instance_config" => config::save_instance_config(&app, &runtime, &args),

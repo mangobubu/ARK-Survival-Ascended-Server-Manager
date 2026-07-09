@@ -17,6 +17,7 @@ import { Button, Form, Input, InputNumber, Radio, Select, Space, Switch, Tooltip
 import { checkInstancePort, createInstance, readServerDirectoryConfig } from './backendApi'
 import { defaultConfig, defaultGlobalSettings, serverMapOptions } from './data'
 import { isTauriRuntime } from './runtime'
+import WebHostDirectoryPicker from './WebHostDirectoryPicker'
 import type {
   AddInstancePayload,
   ImportedServerConfigPreview,
@@ -89,6 +90,7 @@ export default function AddInstanceWindow({ initialParams, onCreated, onClose }:
   const [messageApi, contextHolder] = message.useMessage()
   const [submitting, setSubmitting] = useState(false)
   const [selectingDirectory, setSelectingDirectory] = useState(false)
+  const [webDirectoryPickerOpen, setWebDirectoryPickerOpen] = useState(false)
   const [importedPreview, setImportedPreview] = useState<ImportedServerConfigPreview | null>(null)
   const [portChecks, setPortChecks] = useState<Record<PortField, PortCheckState>>(createInitialPortChecks)
   const portCheckRequestRef = useRef(0)
@@ -276,13 +278,45 @@ export default function AddInstanceWindow({ initialParams, onCreated, onClose }:
     }
   }
 
+  const applySelectedServerDirectory = async (selectedPath: string) => {
+    const imported = await readServerDirectoryConfig(selectedPath)
+    const importedValues: Partial<AddInstanceFormValues> = {
+      installPath: imported.installPath || selectedPath,
+      autoInstall: true,
+    }
+
+    if (imported.name) importedValues.name = imported.name
+    if (imported.mapCode && serverMapOptions.some((item) => item.code === imported.mapCode)) {
+      importedValues.mapCode = imported.mapCode
+    }
+    if (imported.mode) importedValues.mode = imported.mode
+    if (imported.gamePort) importedValues.gamePort = imported.gamePort
+    if (imported.queryPort) importedValues.queryPort = imported.queryPort
+    if (imported.rconPort) importedValues.rconPort = imported.rconPort
+    if (imported.maxPlayers) importedValues.maxPlayers = imported.maxPlayers
+    if (imported.clusterId) importedValues.clusterId = imported.clusterId
+    if (imported.serverPassword !== null) importedValues.serverPassword = imported.serverPassword
+    if (imported.adminPassword) importedValues.adminPassword = imported.adminPassword
+
+    form.setFieldsValue(importedValues)
+    setImportedPreview(imported.foundFiles.length > 0 ? imported : null)
+
+    if (imported.foundFiles.length > 0) {
+      const modText = imported.mods.length > 0 ? `，包含 ${imported.mods.length} 个 MOD` : ''
+      messageApi.success(`已读取 ${imported.foundFiles.length} 个配置文件${modText}，创建后将执行更新/校验`)
+    } else {
+      messageApi.info('已选择目录；新安装的服务端通常要启动一次或保存配置后才会生成可导入配置，创建后将先执行更新/校验')
+    }
+  }
+
   const selectServerDirectory = async () => {
+    if (!isTauriRuntime()) {
+      setWebDirectoryPickerOpen(true)
+      return
+    }
+
     setSelectingDirectory(true)
     try {
-      if (!isTauriRuntime()) {
-        messageApi.info('Web 版无法打开本机目录选择器，请手动输入运行主机上的 ASA 服务端文件夹路径')
-        return
-      }
       const selectedPath = await open({
         defaultPath: form.getFieldValue('installPath') || undefined,
         directory: true,
@@ -290,35 +324,20 @@ export default function AddInstanceWindow({ initialParams, onCreated, onClose }:
         title: '选择 ASA 服务端文件夹',
       })
       if (!selectedPath) return
+      await applySelectedServerDirectory(selectedPath)
+    } catch (error) {
+      setImportedPreview(null)
+      messageApi.error(`读取服务端目录失败：${String(error)}`)
+    } finally {
+      setSelectingDirectory(false)
+    }
+  }
 
-      const imported = await readServerDirectoryConfig(selectedPath)
-      const importedValues: Partial<AddInstanceFormValues> = {
-        installPath: imported.installPath || selectedPath,
-        autoInstall: true,
-      }
-
-      if (imported.name) importedValues.name = imported.name
-      if (imported.mapCode && serverMapOptions.some((item) => item.code === imported.mapCode)) {
-        importedValues.mapCode = imported.mapCode
-      }
-      if (imported.mode) importedValues.mode = imported.mode
-      if (imported.gamePort) importedValues.gamePort = imported.gamePort
-      if (imported.queryPort) importedValues.queryPort = imported.queryPort
-      if (imported.rconPort) importedValues.rconPort = imported.rconPort
-      if (imported.maxPlayers) importedValues.maxPlayers = imported.maxPlayers
-      if (imported.clusterId) importedValues.clusterId = imported.clusterId
-      if (imported.serverPassword !== null) importedValues.serverPassword = imported.serverPassword
-      if (imported.adminPassword) importedValues.adminPassword = imported.adminPassword
-
-      form.setFieldsValue(importedValues)
-      setImportedPreview(imported.foundFiles.length > 0 ? imported : null)
-
-      if (imported.foundFiles.length > 0) {
-        const modText = imported.mods.length > 0 ? `，包含 ${imported.mods.length} 个 MOD` : ''
-        messageApi.success(`已读取 ${imported.foundFiles.length} 个配置文件${modText}，创建后将执行更新/校验`)
-      } else {
-        messageApi.info('已选择目录；新安装的服务端通常要启动一次或保存配置后才会生成可导入配置，创建后将先执行更新/校验')
-      }
+  const chooseWebServerDirectory = async (selectedPath: string) => {
+    setSelectingDirectory(true)
+    try {
+      await applySelectedServerDirectory(selectedPath)
+      setWebDirectoryPickerOpen(false)
     } catch (error) {
       setImportedPreview(null)
       messageApi.error(`读取服务端目录失败：${String(error)}`)
@@ -558,6 +577,13 @@ export default function AddInstanceWindow({ initialParams, onCreated, onClose }:
           </Space>
         </footer>
       </Form>
+      <WebHostDirectoryPicker
+        choosing={selectingDirectory}
+        initialPath={form.getFieldValue('installPath') || initialValues.installPath}
+        onCancel={() => setWebDirectoryPickerOpen(false)}
+        onChoose={(path) => void chooseWebServerDirectory(path)}
+        open={webDirectoryPickerOpen}
+      />
     </div>
   )
 }

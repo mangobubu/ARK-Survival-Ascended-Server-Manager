@@ -1000,6 +1000,98 @@ button, input, textarea { font: inherit; }
 }
 .add-instance-footer > .ant-typography { font-size: 10px; }
 
+.web-host-directory-picker .ant-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.web-host-directory-picker__intro {
+  padding: 9px 11px;
+  border: 1px solid rgba(22, 184, 255, .2);
+  border-radius: 6px;
+  color: #89a5b8;
+  background: rgba(5, 31, 51, .58);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.web-host-directory-picker__toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.web-host-directory-picker__list {
+  min-height: 286px;
+  max-height: min(42vh, 420px);
+  overflow: auto;
+  border: 1px solid #113550;
+  border-radius: 7px;
+  background: rgba(2, 13, 23, .72);
+  scrollbar-color: #1a4d6d rgba(3, 15, 26, .55);
+  scrollbar-width: thin;
+}
+
+.web-host-directory-picker__list .ant-list-item {
+  padding: 10px 12px;
+  border-block-end-color: #0c263a !important;
+  transition: background .16s ease;
+}
+
+.web-host-directory-picker__list .ant-list-item:hover { background: rgba(22, 184, 255, .06); }
+.web-host-directory-picker__folder-icon { color: #16b8ff; font-size: 20px; }
+
+.web-host-directory-picker__entry-title {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  color: #dceaf5;
+  font-size: 12px;
+}
+
+.web-host-directory-picker__entry-description {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.web-host-directory-picker__entry-description > span:first-child {
+  color: #7190a5;
+  font-size: 10px;
+}
+
+.web-host-directory-picker__entry-description .ant-typography {
+  margin: 0;
+  color: #587487;
+  font-size: 10px;
+  word-break: break-all;
+}
+
+.web-host-directory-picker__selected {
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #164232;
+  border-radius: 6px;
+  color: #16d17c;
+  background: rgba(6, 35, 25, .48);
+  font-size: 11px;
+}
+
+.web-host-directory-picker__selected strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #c8f5da;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Global settings window */
 .settings-window {
   height: 100vh;
@@ -2013,6 +2105,44 @@ html.theme-light .log-console__clear.ant-btn:focus-visible {
 html.theme-light .ant-modal .ant-modal-content {
   border-color: #c9d9e6;
   background: #ffffff;
+}
+
+html.theme-light .web-host-directory-picker__intro {
+  border-color: #c7d9e7;
+  color: #53677a;
+  background: #f6faff;
+}
+
+html.theme-light .web-host-directory-picker__list {
+  border-color: #c9d9e6;
+  background: #fbfdff;
+}
+
+html.theme-light .web-host-directory-picker__list .ant-list-item {
+  border-block-end-color: #dbe7f0 !important;
+}
+
+html.theme-light .web-host-directory-picker__list .ant-list-item:hover {
+  background: #f2f9ff;
+}
+
+html.theme-light .web-host-directory-picker__entry-title {
+  color: #172433;
+}
+
+html.theme-light .web-host-directory-picker__entry-description > span:first-child,
+html.theme-light .web-host-directory-picker__entry-description .ant-typography {
+  color: #5d7082;
+}
+
+html.theme-light .web-host-directory-picker__selected {
+  border-color: #bfe7cf;
+  color: #0d9252;
+  background: #f4fff8;
+}
+
+html.theme-light .web-host-directory-picker__selected strong {
+  color: #17613d;
 }
 
 html.theme-light .item-stack-editor-table th,
