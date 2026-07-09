@@ -1,5 +1,15 @@
 # 更新日志
 
+## v0.3.3
+
+- 修复 OpenResty for Windows 启动时使用相对 Lua 路径，导致 `asa_security` 安全网关脚本无法加载、域名反向代理无法访问的问题。
+- 将 OpenResty 生成配置中的 `lua_package_path` 与 IP 白名单 CIDR 文件路径统一写入标准化绝对路径，避免工作目录差异造成脚本或白名单文件读取失败。
+- 强化 OpenResty 启动状态检测逻辑：启动前清理旧 PID 文件，启动后读取 PID 并确认进程真实存活，不再因空 PID 文件误判反代已启动。
+- 优化 OpenResty 启动失败诊断信息，失败时会带出 PID 文件状态与最近错误日志，便于快速定位配置或运行时问题。
+- 增加同配置重保存时的进程存活校验，OpenResty 被外部退出后会自动重新拉起，减少用户手动排障成本。
+- 补充反向代理配置渲染回归测试，并完成 `cargo test` 与 `npm run build` 验证。
+- 同步项目版本号至 `0.3.3`，并补充 Release 工作流可读取的版本更新日志。
+
 ## v0.3.2
 
 - 修复启用域名反向代理 HTTPS 时，OpenResty 将证书相对路径误解析到 `web-reverse-proxy/conf/certs` 导致配置校验失败的问题。

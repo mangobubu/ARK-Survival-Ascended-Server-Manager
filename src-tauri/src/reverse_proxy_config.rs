@@ -14,7 +14,8 @@ pub(crate) struct ReverseProxyRenderInput<'a> {
     pub(crate) web_port: u16,
     pub(crate) https_enabled: bool,
     pub(crate) certificate_paths: Option<&'a WebCertificatePaths>,
-    pub(crate) ip_whitelist_cidr_relative_path: &'a str,
+    pub(crate) lualib_path: &'a Path,
+    pub(crate) ip_whitelist_cidr_path: &'a Path,
     pub(crate) login_failure_ban_threshold: u32,
     pub(crate) login_failure_ban_seconds: u32,
 }
@@ -24,6 +25,8 @@ pub(crate) fn render_openresty_config(input: &ReverseProxyRenderInput<'_>) -> St
     let listen_directive = listen_directive(input);
     let ssl_config = ssl_config(input);
     let security_headers = security_headers(input);
+    let lua_package_path = lua_package_path(input.lualib_path);
+    let ip_whitelist_cidr_path = lua_string_literal_path(input.ip_whitelist_cidr_path);
     format!(
         r#"# 由 ASA 服务端管理器自动生成，请勿手动编辑。
 worker_processes  1;
@@ -41,7 +44,7 @@ http {{
     keepalive_timeout 65;
     client_max_body_size 16m;
     client_body_buffer_size 128k;
-    lua_package_path "lualib/?.lua;;";
+    lua_package_path {lua_package_path};
     lua_shared_dict asa_ip_bans 10m;
     lua_shared_dict asa_rate_counters 20m;
     lua_shared_dict asa_login_failures 10m;
@@ -52,7 +55,7 @@ http {{
         require("asa_security").configure({{
             domain = "{domain}",
             public_port = {public_port},
-            ip_whitelist_cidr_path = "{ip_whitelist_cidr_path}",
+            ip_whitelist_cidr_path = {ip_whitelist_cidr_path},
             login_failure_ban_threshold = {login_failure_ban_threshold},
             login_failure_ban_seconds = {login_failure_ban_seconds},
             rate_limit_per_minute = {rate_limit_per_minute},
@@ -137,7 +140,8 @@ http {{
         listen_directive = listen_directive,
         ssl_config = ssl_config,
         security_headers = security_headers,
-        ip_whitelist_cidr_path = input.ip_whitelist_cidr_relative_path.replace('\\', "/"),
+        lua_package_path = lua_package_path,
+        ip_whitelist_cidr_path = ip_whitelist_cidr_path,
         login_failure_ban_threshold = input.login_failure_ban_threshold,
         login_failure_ban_seconds = input.login_failure_ban_seconds,
         rate_limit_per_minute = RATE_LIMIT_PER_MINUTE,
@@ -147,6 +151,30 @@ http {{
         path_risk_ban_seconds = PATH_RISK_BAN_SECONDS,
         body_risk_ban_seconds = BODY_RISK_BAN_SECONDS,
     )
+}
+
+fn lua_package_path(lualib_path: &Path) -> String {
+    let mut normalized_path = lualib_path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .replace('"', "\\\"");
+    if !normalized_path.ends_with('/') {
+        normalized_path.push('/');
+    }
+    format!("\"{normalized_path}?.lua;;\"")
+}
+
+fn lua_string_literal_path(path: &Path) -> String {
+    lua_string_literal(&path.to_string_lossy().replace('\\', "/"))
+}
+
+fn lua_string_literal(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\r', "\\r")
+        .replace('\n', "\\n");
+    format!("\"{escaped}\"")
 }
 
 fn default_listen_directive(input: &ReverseProxyRenderInput<'_>) -> String {

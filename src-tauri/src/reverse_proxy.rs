@@ -59,7 +59,9 @@ impl ReverseProxyManager {
             .lock()
             .map_err(|_| "Web 反向代理状态锁已损坏".to_string())?
             .as_ref()
-            .is_some_and(|active| active == &desired);
+            .is_some_and(|active| {
+                active == &desired && active.running_pid().unwrap_or(None).is_some()
+            });
 
         if already_active {
             return Ok(());

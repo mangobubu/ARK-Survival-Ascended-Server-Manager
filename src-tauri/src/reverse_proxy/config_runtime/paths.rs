@@ -18,6 +18,14 @@ impl ReverseProxyConfig {
         self.proxy_root_path.join(IP_WHITELIST_CIDR_RELATIVE_PATH)
     }
 
+    pub(super) fn lualib_path(&self) -> PathBuf {
+        self.proxy_root_path.join("lualib")
+    }
+
+    pub(super) fn error_log_path(&self) -> PathBuf {
+        self.proxy_root_path.join("logs").join("asa-web-error.log")
+    }
+
     pub(super) fn pid_path(&self) -> PathBuf {
         self.proxy_root_path
             .join("logs")

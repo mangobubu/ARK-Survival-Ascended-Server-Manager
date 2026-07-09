@@ -83,7 +83,11 @@ fn 生成_openresty_配置包含_lua_安全网关与反代_host() {
     assert!(!rendered.contains("by_lua_block {}"));
     assert!(rendered.contains("login_failure_ban_threshold = 7"));
     assert!(rendered.contains("login_failure_ban_seconds = 900"));
-    assert!(rendered.contains("ip_whitelist_cidr_path = \"conf/asa-ip-whitelist-cidrs.txt\""));
+    assert!(rendered.contains(r#"lua_package_path "D:/ASA/proxy/lualib/?.lua;;";"#));
+    assert!(
+        rendered
+            .contains(r#"ip_whitelist_cidr_path = "D:/ASA/proxy/conf/asa-ip-whitelist-cidrs.txt""#)
+    );
     assert!(rendered.contains("proxy_pass http://127.0.0.1:18080;"));
     assert!(rendered.contains("proxy_set_header Host $host:$server_port;"));
 }
