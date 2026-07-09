@@ -183,7 +183,11 @@ fn server_executable_detected(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+    use std::{fs, path::Path};
+
+    fn canonical_test_path_text(path: &Path) -> String {
+        path_text(&fs::canonicalize(path).expect("解析测试路径"))
+    }
 
     #[test]
     fn 列出服务器存储目录内的子目录并标记_asa_目录() {
@@ -230,11 +234,11 @@ mod tests {
             list_host_directories_in_root(&root, Some(&asa.join("尚未创建").join("子目录")))
                 .expect("读取目录");
 
-        assert_eq!(listing.current_path, path_text(&asa));
-        assert_eq!(
-            listing.parent_path.as_deref(),
-            Some(path_text(&root).as_str())
-        );
+        let expected_asa = canonical_test_path_text(&asa);
+        let expected_root = canonical_test_path_text(&root);
+
+        assert_eq!(listing.current_path, expected_asa);
+        assert_eq!(listing.parent_path.as_deref(), Some(expected_root.as_str()));
     }
 
     #[test]
