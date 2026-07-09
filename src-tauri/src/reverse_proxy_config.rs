@@ -9,7 +9,6 @@ const PATH_RISK_BAN_SECONDS: u32 = 60 * 60;
 const BODY_RISK_BAN_SECONDS: u32 = 60 * 60;
 
 pub(crate) struct ReverseProxyRenderInput<'a> {
-    pub(crate) proxy_root_path: &'a Path,
     pub(crate) domain: &'a str,
     pub(crate) public_port: u16,
     pub(crate) web_port: u16,
@@ -173,8 +172,8 @@ fn ssl_config(input: &ReverseProxyRenderInput<'_>) -> String {
     let Some(paths) = input.certificate_paths else {
         return String::new();
     };
-    let cert_path = nginx_relative_path(input.proxy_root_path, &paths.fullchain_pem);
-    let key_path = nginx_relative_path(input.proxy_root_path, &paths.private_key_pem);
+    let cert_path = nginx_quoted_absolute_path(&paths.fullchain_pem);
+    let key_path = nginx_quoted_absolute_path(&paths.private_key_pem);
     format!(
         r#"
         ssl_certificate {cert_path};
@@ -202,9 +201,10 @@ fn security_headers(input: &ReverseProxyRenderInput<'_>) -> String {
     )
 }
 
-fn nginx_relative_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
+fn nginx_quoted_absolute_path(path: &Path) -> String {
+    let normalized_path = path
         .to_string_lossy()
         .replace('\\', "/")
+        .replace('"', "\\\"");
+    format!("\"{normalized_path}\"")
 }

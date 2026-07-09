@@ -8,7 +8,6 @@ use super::super::{IP_WHITELIST_CIDR_RELATIVE_PATH, ReverseProxyConfig};
 impl ReverseProxyConfig {
     pub(in crate::reverse_proxy) fn render_config(&self) -> String {
         render_openresty_config(&ReverseProxyRenderInput {
-            proxy_root_path: &self.proxy_root_path,
             domain: &self.domain,
             public_port: self.public_port,
             web_port: self.web_port,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::acme_certificate::WebCertificatePaths;
 use crate::models::{WEB_IP_WHITELIST_CHINA_MAINLAND, WebIpWhitelistEntry};
 use std::path::PathBuf;
 
@@ -85,6 +86,30 @@ fn 生成_openresty_配置包含_lua_安全网关与反代_host() {
     assert!(rendered.contains("ip_whitelist_cidr_path = \"conf/asa-ip-whitelist-cidrs.txt\""));
     assert!(rendered.contains("proxy_pass http://127.0.0.1:18080;"));
     assert!(rendered.contains("proxy_set_header Host $host:$server_port;"));
+}
+
+#[test]
+fn https_证书路径使用绝对路径避免被_openresty_解析到_conf_certs() {
+    let mut config = proxy_config();
+    config.https_enabled = true;
+    config.certificate_paths = Some(WebCertificatePaths {
+        fullchain_pem: PathBuf::from(r"D:\ASA\proxy\certs\asa.example.com.fullchain.pem"),
+        private_key_pem: PathBuf::from(r"D:\ASA\proxy\certs\asa.example.com.RSA2048.key.pem"),
+    });
+
+    let rendered = config.render_config();
+
+    assert!(rendered.contains("listen 0.0.0.0:18081 ssl default_server;"));
+    assert!(
+        rendered.contains(r#"ssl_certificate "D:/ASA/proxy/certs/asa.example.com.fullchain.pem";"#)
+    );
+    assert!(
+        rendered.contains(
+            r#"ssl_certificate_key "D:/ASA/proxy/certs/asa.example.com.RSA2048.key.pem";"#
+        )
+    );
+    assert!(!rendered.contains("ssl_certificate certs/"));
+    assert!(!rendered.contains("ssl_certificate conf/certs/"));
 }
 
 #[test]
