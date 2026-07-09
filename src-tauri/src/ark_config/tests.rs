@@ -48,6 +48,27 @@ fn server_admin_password_is_last_map_url_option() {
 }
 
 #[test]
+fn harvest_multipliers_are_added_to_launch_url_before_admin_password() {
+    let instance = test_instance(Path::new("D:\\ASA"));
+    let config = json!({
+        "adminPassword": "admin.pass",
+        "pve": true,
+        "harvestAmount": 5.0,
+        "harvestHealthMultiplier": 1.0
+    });
+
+    let args = build_launch_arguments(&instance, &config, &[]);
+
+    assert!(args[0].contains("?HarvestAmountMultiplier=5"));
+    assert!(args[0].contains("?HarvestHealthMultiplier=1"));
+    assert!(args[0].ends_with("?ServerAdminPassword=admin.pass"));
+    assert!(
+        args[0].find("HarvestAmountMultiplier").unwrap()
+            < args[0].find("ServerAdminPassword").unwrap()
+    );
+}
+
+#[test]
 fn private_visibility_requires_password_or_exclusive_join() {
     let temp = tempfile::tempdir().expect("创建临时目录");
     let instance = test_instance(temp.path());
@@ -181,6 +202,8 @@ fn 写入扩展配置到正确文件() {
         "resourceNoReplenishRadiusPlayers": 2.5,
         "resourceNoReplenishRadiusStructures": 3.5,
         "maxTamedDinos": 1234,
+        "harvestAmount": 5.0,
+        "harvestHealthMultiplier": 1.5,
         "cropGrowthSpeedMultiplier": 4.5,
         "cropDecaySpeedMultiplier": 5.5,
         "supplyCrateLootQualityMultiplier": 2.25,
@@ -253,6 +276,8 @@ fn 写入扩展配置到正确文件() {
         "TributeDinoExpirationSeconds=7200",
         "TributeItemExpirationSeconds=1800",
         "MaxTamedDinos=1234",
+        "HarvestAmountMultiplier=5",
+        "HarvestHealthMultiplier=1.5",
         "ItemStackSizeMultiplier=7.5",
         "RaidDinoCharacterFoodDrainMultiplier=0.75",
         "MinimumDinoReuploadInterval=1800",

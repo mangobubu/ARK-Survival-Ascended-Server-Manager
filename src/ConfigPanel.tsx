@@ -156,7 +156,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
           <Field label="经验倍率"><NumberField value={config.xpMultiplier} min={0.1} max={100} step={0.1} onChange={(v) => set('xpMultiplier', v)} addonAfter="x" /></Field>
           <Field label="驯服倍率"><NumberField value={config.tamingSpeed} min={0.1} max={100} step={0.5} onChange={(v) => set('tamingSpeed', v)} addonAfter="x" /></Field>
         </div>
-        <Field label="采集数量倍率"><NumberField value={config.harvestAmount} min={0.1} max={100} step={0.5} onChange={(v) => set('harvestAmount', v)} addonAfter="x" /></Field>
+        <Field label="采集数量倍率" tip="HarvestAmountMultiplier；写入 GameUserSettings.ini，并同步加入启动参数兜底。ASA 官方 1x 若显示 +2，设置 5x 理论应为 +10。"><NumberField value={config.harvestAmount} min={0.1} max={100} step={0.5} onChange={(v) => set('harvestAmount', v)} addonAfter="x" /></Field>
         <Field label="采集物耐久倍率" tip="HarvestHealthMultiplier；越高可采集的次数越多"><NumberField value={config.harvestHealthMultiplier} min={0.1} max={100} step={0.1} onChange={(v) => set('harvestHealthMultiplier', v)} addonAfter="x" /></Field>
         <Field label="硬核模式"><Switch checked={config.hardcore} onChange={(v) => set('hardcore', v)} /></Field>
         <Field label="禁用友军伤害"><Switch checked={config.disableFriendlyFire} onChange={(v) => set('disableFriendlyFire', v)} /></Field>

@@ -42,6 +42,20 @@ pub fn build_launch_arguments(
     if bool_value(config, "pve", instance.mode == "PvE") {
         map_url.push_str("?ServerPVE=True");
     }
+    // 保留 GameUserSettings.ini 写入作为主配置，同时把采集倍率追加到启动 URL，
+    // 让本次启动明确使用同一个倍率值，避免运行时继续沿用旧倍率。
+    push_number_url_option(
+        &mut map_url,
+        config,
+        "harvestAmount",
+        "HarvestAmountMultiplier",
+    );
+    push_number_url_option(
+        &mut map_url,
+        config,
+        "harvestHealthMultiplier",
+        "HarvestHealthMultiplier",
+    );
     if !admin_password.is_empty() {
         // ASA persists trailing URL options into ServerAdminPassword, so keep it last.
         map_url.push_str(&format!(
@@ -164,5 +178,11 @@ pub fn build_launch_arguments(
 fn push_flag(args: &mut Vec<String>, config: &Value, key: &str, flag: &str) {
     if bool_value(config, key, false) {
         args.push(flag.to_string());
+    }
+}
+
+fn push_number_url_option(map_url: &mut String, config: &Value, key: &str, option: &str) {
+    if let Some(value) = config.get(key).and_then(Value::as_f64) {
+        map_url.push_str(&format!("?{option}={value}"));
     }
 }

@@ -1,5 +1,15 @@
 # 更新日志
 
+## v0.3.8
+
+- 修复 ASA 服务端“采集数量倍率”保存并应用重启后仍可能表现为官方 1x 基础数量的问题，在继续写入 `GameUserSettings.ini` 的 `HarvestAmountMultiplier` 基础上，同步把采集倍率追加到启动 URL，确保本次启动明确使用管理器配置值。
+- 同步为 `HarvestHealthMultiplier` 增加启动 URL 兜底，保持采集数量倍率与采集物耐久倍率的运行时配置链路一致。
+- 优化“采集数量倍率”界面提示，明确该字段对应 `HarvestAmountMultiplier`，并提示 ASA 官方 1x 若显示 `+2`，设置 5x 理论应显示 `+10`。
+- 补充采集倍率启动参数顺序测试，确保新增倍率参数位于 `ServerAdminPassword` 之前，不破坏 ASA 管理员密码必须作为尾部 URL 选项的兼容处理。
+- 补充配置渲染测试覆盖 `HarvestAmountMultiplier=5` 与 `HarvestHealthMultiplier=1.5` 的 `GameUserSettings.ini` 写入结果，降低后续倍率配置回归风险。
+- 完成 `cargo test` 与 `npm run build` 验证，确认后端配置生成、启动参数构建和前端构建无回归。
+- 同步项目版本号至 `0.3.8`，确保前端包版本、Tauri 配置、Cargo 包信息、锁文件和发布标签版本一致。
+
 ## v0.3.7
 
 - 新增 ASA 服务端玩家进退服日志识别，将 `joined this ARK`、`joined the server`、`Join succeeded`、`left this ARK`、`logged out` 等服务端日志事件转写到集群“应用日志”页签。
