@@ -17,7 +17,7 @@ pub(crate) trait AcmeDnsProvider {
         ttl: u32,
     ) -> Result<TencentDnsRecord, String>;
 
-    fn delete_record(&self, domain: &str, record_id: u64) -> Result<(), String>;
+    fn cleanup_txt_record(&self, record: &TencentDnsRecord) -> Result<(), String>;
 }
 
 pub(crate) struct TencentAcmeDnsProvider {
@@ -46,8 +46,8 @@ impl AcmeDnsProvider for TencentAcmeDnsProvider {
         tencent_dns::create_txt_record_blocking(&self.credential, domain, sub_domain, value, ttl)
     }
 
-    fn delete_record(&self, domain: &str, record_id: u64) -> Result<(), String> {
-        tencent_dns::delete_record_blocking(&self.credential, domain, record_id)
+    fn cleanup_txt_record(&self, record: &TencentDnsRecord) -> Result<(), String> {
+        tencent_dns::cleanup_record_blocking(&self.credential, record)
     }
 }
 
@@ -139,7 +139,7 @@ fn cleanup_dns_record(
     dns_provider: &dyn AcmeDnsProvider,
     record: TencentDnsRecord,
 ) -> Result<(), String> {
-    dns_provider.delete_record(&record.domain, record.id)
+    dns_provider.cleanup_txt_record(&record)
 }
 
 fn acme_log(log_sink: Option<&AcmeLogSink<'_>>, level: &str, message: &str) {

@@ -168,8 +168,28 @@ jobs:
           }
           $hashLines | Set-Content -Path $checksumPath -Encoding UTF8
 
+          $changelogPath = Join-Path $PWD 'CHANGELOG.md'
+          $releaseNotesBody = ''
+          if (Test-Path $changelogPath) {
+            $changelogText = Get-Content -Raw -Encoding UTF8 $changelogPath
+            $escapedTag = [Regex]::Escape($tagName)
+            $match = [Regex]::Match($changelogText, "(?ms)^##\s+$escapedTag\s*\r?\n(?<body>.*?)(?=^##\s+|\z)")
+            if ($match.Success) {
+              $releaseNotesBody = $match.Groups['body'].Value.Trim()
+            }
+          }
+          if ([string]::IsNullOrWhiteSpace($releaseNotesBody)) {
+            $releaseNotesBody = '- 本版本更新日志未在 CHANGELOG.md 中声明。'
+          }
+
           @"
           # 方舟进化飞升服务器管理器 $tagName
+
+          ## 更新日志
+
+          $releaseNotesBody
+
+          ## 发布说明
 
           - 仅提供 Windows x64 发布产物。
           - 本项目面向 ARK: Survival Ascended 服务端管理场景。

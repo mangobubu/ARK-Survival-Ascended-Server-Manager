@@ -31,21 +31,23 @@ impl AcmeDnsProvider for MockAcmeDnsProvider {
         _ttl: u32,
     ) -> Result<TencentDnsRecord, String> {
         let mut created = self.created.lock().expect("读取 mock DNS 创建记录");
-        let record = TencentDnsRecord {
-            id: created.len() as u64 + 1,
-            domain: domain.to_string(),
-            sub_domain: sub_domain.to_string(),
-            value: value.to_string(),
-        };
+        let record = TencentDnsRecord::created(
+            created.len() as u64 + 1,
+            domain,
+            sub_domain,
+            value,
+            600,
+            "默认",
+        );
         created.push(record.clone());
         Ok(record)
     }
 
-    fn delete_record(&self, domain: &str, record_id: u64) -> Result<(), String> {
+    fn cleanup_txt_record(&self, record: &TencentDnsRecord) -> Result<(), String> {
         self.deleted
             .lock()
             .expect("读取 mock DNS 删除记录")
-            .push((domain.to_string(), record_id));
+            .push((record.domain.clone(), record.id));
         Ok(())
     }
 }

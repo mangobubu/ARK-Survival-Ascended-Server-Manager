@@ -1,6 +1,6 @@
 [package]
 name = "asa-server-manager"
-version = "0.3.0"
+version = "0.3.1"
 description = "ARK: Survival Ascended server manager prototype"
 authors = ["ASA Server Manager"]
 edition = "2024"
