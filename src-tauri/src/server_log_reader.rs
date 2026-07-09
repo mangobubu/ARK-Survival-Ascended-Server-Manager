@@ -4,12 +4,13 @@ pub(crate) use file_tail::attach_server_log_file_reader;
 
 use crate::{
     app_state::AppRuntime,
-    command_events::publish_sync_event_best_effort,
+    command_events::{emit_instance_log, publish_sync_event_best_effort},
     models::{ServerInstance, ServerLogKind},
     server_log::{
         SharedServerLogDeduper, classify_server_log_level, should_skip_duplicate_server_log,
     },
     server_log_events::emit_server_log,
+    server_player_events::parse_player_server_event,
     server_version::{parse_asa_server_version, with_current_server_version},
     sync_events::INSTANCE_STATUS_EVENT,
 };
@@ -147,6 +148,15 @@ fn handle_server_log_line(
         line,
         server_log_kind,
     );
+    if let Some(player_event) = parse_player_server_event(line) {
+        let _ = emit_instance_log(
+            context.app,
+            context.runtime,
+            context.instance_name,
+            player_event.level(),
+            &player_event.application_message(),
+        );
+    }
 }
 
 fn is_instance_process_tracked(runtime: &AppRuntime, instance_id: &str) -> bool {

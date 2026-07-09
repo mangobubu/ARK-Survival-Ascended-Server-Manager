@@ -52,6 +52,7 @@ mod server_log;
 mod server_log_cleanup;
 mod server_log_events;
 mod server_log_reader;
+mod server_player_events;
 mod server_rcon;
 mod server_version;
 mod settings_commands;
