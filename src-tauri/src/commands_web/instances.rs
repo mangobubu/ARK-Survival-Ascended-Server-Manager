@@ -1,8 +1,10 @@
 use super::support::{no_op_channel, required_arg, to_json};
 use crate::{
     app_state::AppRuntime,
-    command_events::{publish_instances_changed, publish_sync_event_best_effort},
-    commands::install_or_update_instance_inner,
+    command_events::{
+        emit_instance_log, publish_instances_changed, publish_sync_event_best_effort,
+    },
+    commands::{emit_instance_created_log, install_or_update_instance_inner},
     instance_query_commands,
     models::{AddInstancePayload, JobProgress},
     server_lifecycle::{
@@ -52,6 +54,7 @@ pub(super) fn create_instance(
     let payload: AddInstancePayload = required_arg(args, "payload")?;
     let auto_install = payload.auto_install;
     let instance = with_current_server_version(runtime.create_instance(payload)?);
+    emit_instance_created_log(app, runtime, &instance)?;
     publish_sync_event_best_effort(
         app,
         ADD_INSTANCE_CREATED_EVENT,
@@ -139,6 +142,13 @@ pub(super) fn delete_instance(
     args: &Value,
 ) -> Result<Value, String> {
     let removed = runtime.delete_instance(&required_arg::<String>(args, "instanceId")?)?;
+    emit_instance_log(
+        app,
+        runtime,
+        &removed.name,
+        "warn",
+        &format!("已删除实例记录，实例文件仍保留在：{}", removed.install_path),
+    )?;
     publish_sync_event_best_effort(app, INSTANCE_DELETED_EVENT, removed.clone());
     publish_instances_changed(app);
     to_json(removed)

@@ -1,10 +1,9 @@
 use crate::{
     app_state::{AppRuntime, normalize_required_rcon_config},
+    command_events::emit_instance_log,
     models::{ServerInstance, ServerStatus},
     rcon,
     rcon_players::parse_list_players_count,
-    sync_events::LOG_LINE_EVENT,
-    window_controls,
 };
 use serde_json::Value;
 use std::time::Duration;
@@ -159,18 +158,6 @@ fn u16_from_config(config: &Value, key: &str, fallback: u16) -> u16 {
         .and_then(Value::as_u64)
         .and_then(|value| u16::try_from(value).ok())
         .unwrap_or(fallback)
-}
-
-fn emit_instance_log(
-    app: &AppHandle,
-    runtime: &AppRuntime,
-    instance_name: &str,
-    level: &str,
-    message: &str,
-) -> Result<(), String> {
-    let line = runtime.add_log(instance_name, level, message)?;
-    window_controls::publish_settings_changed_and_apply(app, LOG_LINE_EVENT, line)
-        .map_err(|error| format!("发送日志事件失败：{error}"))
 }
 
 #[cfg(test)]

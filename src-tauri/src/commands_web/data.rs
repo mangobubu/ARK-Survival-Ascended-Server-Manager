@@ -3,8 +3,13 @@ use crate::{app_state::AppRuntime, instance_data_commands};
 use serde_json::Value;
 use tauri::AppHandle;
 
-pub(super) fn create_backup(runtime: &AppRuntime, args: &Value) -> Result<Value, String> {
+pub(super) fn create_backup(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    args: &Value,
+) -> Result<Value, String> {
     to_json(instance_data_commands::create_backup_for_runtime(
+        app,
         runtime,
         required_arg(args, "instanceId")?,
     )?)
@@ -17,8 +22,13 @@ pub(super) fn list_backups(runtime: &AppRuntime, args: &Value) -> Result<Value, 
     )?)
 }
 
-pub(super) fn restore_backup(runtime: &AppRuntime, args: &Value) -> Result<Value, String> {
+pub(super) fn restore_backup(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    args: &Value,
+) -> Result<Value, String> {
     instance_data_commands::restore_backup_for_runtime(
+        app,
         runtime,
         required_arg(args, "instanceId")?,
         required_arg(args, "backupPath")?,

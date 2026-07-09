@@ -1,6 +1,8 @@
 use crate::{
     app_state::AppRuntime,
-    backup, host_directory_browser, import_export, instance_config_import,
+    backup,
+    command_events::emit_instance_log,
+    host_directory_browser, import_export, instance_config_import,
     models::{BackupItem, ExportResult, ImportResult, ImportedServerConfigPreview},
     path_security,
     sync_events::INSTANCES_CHANGED_EVENT,
@@ -26,6 +28,7 @@ pub(crate) fn list_host_directories_for_runtime(
 }
 
 pub(crate) fn create_backup_for_runtime(
+    app: &AppHandle,
     runtime: &AppRuntime,
     instance_id: String,
 ) -> Result<BackupItem, String> {
@@ -35,7 +38,9 @@ pub(crate) fn create_backup_for_runtime(
     let backup = backup::create_instance_backup(backup_root, &instance)?;
     let pruned_count =
         backup::prune_instance_backups(backup_root, &instance, settings.max_backup_retention)?;
-    runtime.add_log(
+    emit_instance_log(
+        app,
+        runtime,
         &instance.name,
         "success",
         &format!(
@@ -61,6 +66,7 @@ pub(crate) fn list_backups_for_runtime(
 }
 
 pub(crate) fn restore_backup_for_runtime(
+    app: &AppHandle,
     runtime: &AppRuntime,
     instance_id: String,
     backup_path: String,
@@ -68,7 +74,9 @@ pub(crate) fn restore_backup_for_runtime(
     let instance = runtime.get_instance(&instance_id)?;
     let backup_path = path_security::ensure_backup_path_allowed(runtime, Path::new(&backup_path))?;
     backup::restore_instance_backup(&instance, &backup_path)?;
-    runtime.add_log(
+    emit_instance_log(
+        app,
+        runtime,
         &instance.name,
         "warn",
         &format!("已恢复备份：{}", backup_path.display()),
@@ -118,10 +126,11 @@ pub fn list_host_directories(
 
 #[tauri::command]
 pub fn create_backup(
+    app: AppHandle,
     runtime: State<'_, AppRuntime>,
     instance_id: String,
 ) -> Result<BackupItem, String> {
-    create_backup_for_runtime(runtime.inner(), instance_id)
+    create_backup_for_runtime(&app, runtime.inner(), instance_id)
 }
 
 #[tauri::command]
@@ -134,11 +143,12 @@ pub fn list_backups(
 
 #[tauri::command]
 pub fn restore_backup(
+    app: AppHandle,
     runtime: State<'_, AppRuntime>,
     instance_id: String,
     backup_path: String,
 ) -> Result<(), String> {
-    restore_backup_for_runtime(runtime.inner(), instance_id, backup_path)
+    restore_backup_for_runtime(&app, runtime.inner(), instance_id, backup_path)
 }
 
 #[tauri::command]

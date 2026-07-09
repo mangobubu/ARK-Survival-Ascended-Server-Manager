@@ -97,6 +97,7 @@ import { ADD_INSTANCE_WINDOW_LABEL, MAIN_WINDOW_LABEL, RCON_WINDOW_LABEL_PREFIX 
 const { Text } = Typography
 const ConfigPanel = lazy(() => import('./ConfigPanel'))
 const PLAYER_STATUS_POLL_INTERVAL_MS = 5_000
+const BACKEND_SYNC_WATCHDOG_INTERVAL_MS = 2_000
 const appVersionLabel = `v${__APP_VERSION__} Rust Backend`
 
 export default function App() {
@@ -258,7 +259,10 @@ export default function App() {
   }, [pollLiveInstanceStatus])
 
   const appendLogLine = useCallback((line: LogLine) => {
-    setLogs((current) => [...current, line].slice(-500))
+    setLogs((current) => {
+      if (current.some((item) => item.id === line.id)) return current
+      return [...current, line].slice(-500)
+    })
   }, [])
 
   const updateJobProgressFromLog = useCallback((line: LogLine) => {
@@ -453,13 +457,11 @@ export default function App() {
   }, [appendLogLine, dirty, loadInstanceDetails, loadInstances, messageApi, refreshLogs, replaceInstance, selectedId, updateJobProgressFromLog])
 
   useEffect(() => {
-    if (isTauriRuntime()) return undefined
-
     const timer = window.setInterval(() => {
       void Promise.all([loadInstances(), refreshLogs()]).catch((error) => {
-        console.error('刷新 Web 版状态失败', error)
+        console.error('刷新跨端同步状态失败', error)
       })
-    }, 3_000)
+    }, BACKEND_SYNC_WATCHDOG_INTERVAL_MS)
 
     return () => window.clearInterval(timer)
   }, [loadInstances, refreshLogs])

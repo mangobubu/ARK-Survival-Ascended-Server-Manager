@@ -36,7 +36,9 @@ pub(crate) fn save_config_for_runtime(
     let instance = runtime.save_config_and_mods(instance_id, config.clone(), mods.clone())?;
     let applied = ark_config::apply_instance_config(&instance, &config, &mods)?;
     let firewall_rules = windows_firewall::ensure_instance_firewall_rules(&instance)?;
-    runtime.add_log(
+    emit_instance_log(
+        app,
+        runtime,
         &instance.name,
         "success",
         &format!(

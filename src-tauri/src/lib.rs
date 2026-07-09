@@ -103,7 +103,9 @@ pub fn run() {
                 match web_server::apply_settings_from_app(app.handle(), &initial_settings) {
                     Ok(()) => true,
                     Err(error) => {
-                        let _ = runtime.add_log(
+                        let _ = command_events::emit_instance_log(
+                            app.handle(),
+                            &runtime,
                             "Web服务",
                             "error",
                             &format!("应用启动时未能启动 Web 管理：{error}"),
@@ -119,7 +121,9 @@ pub fn run() {
                     reverse_proxy::apply_settings_from_app(app.handle(), &initial_settings)
                 && let Some(runtime) = app.handle().try_state::<app_state::AppRuntime>()
             {
-                let _ = runtime.add_log(
+                let _ = command_events::emit_instance_log(
+                    app.handle(),
+                    runtime.inner(),
                     "Web反代",
                     "warn",
                     &format!("应用启动时未能启用域名反向代理：{error}"),

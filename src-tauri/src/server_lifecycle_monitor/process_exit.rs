@@ -1,6 +1,6 @@
 use crate::{
     app_state::AppRuntime,
-    command_events::emit_status,
+    command_events::{emit_instance_log, emit_status},
     models::{ServerInstance, ServerStatus},
     server_version::with_current_server_version,
 };
@@ -35,7 +35,9 @@ pub(crate) fn apply_exited_instance_status(
     exit_status: ExitStatus,
 ) -> Result<ServerInstance, String> {
     let instance = runtime.get_instance(instance_id)?;
-    runtime.add_log(
+    emit_instance_log(
+        app,
+        runtime,
         &instance.name,
         "warn",
         &format!("检测到服务端进程已退出：{exit_status}"),
@@ -47,7 +49,7 @@ pub(crate) fn apply_exited_instance_status(
         } else {
             format!("服务端进程异常退出：{exit_status}")
         };
-        runtime.add_log(&instance.name, "error", &error)?;
+        emit_instance_log(app, runtime, &instance.name, "error", &error)?;
         runtime.set_instance_pid(instance_id, None, ServerStatus::Error)?;
         runtime.update_instance_status(instance_id, ServerStatus::Error, Some(error))?
     } else {

@@ -6,6 +6,7 @@ pub(crate) use open_paths::open_directory;
 
 use crate::{
     app_state::AppRuntime,
+    ark_config,
     command_events::{
         emit_instance_log, publish_instances_changed, publish_sync_event_best_effort,
     },
@@ -47,6 +48,7 @@ pub fn create_instance(
     let instance = runtime
         .create_instance(payload)
         .map(with_current_server_version)?;
+    emit_instance_created_log(&app, runtime.inner(), &instance)?;
     let firewall_rules = windows_firewall::ensure_instance_firewall_rules(&instance)?;
     if !firewall_rules.is_empty() {
         let _ = emit_instance_log(
@@ -190,9 +192,36 @@ pub fn delete_instance(
     instance_id: String,
 ) -> Result<ServerInstance, String> {
     let removed = runtime.delete_instance(&instance_id)?;
+    emit_instance_log(
+        &app,
+        runtime.inner(),
+        &removed.name,
+        "warn",
+        &format!("已删除实例记录，实例文件仍保留在：{}", removed.install_path),
+    )?;
     publish_sync_event_best_effort(&app, INSTANCE_DELETED_EVENT, removed.clone());
     publish_instances_changed(&app);
     Ok(removed)
+}
+
+pub(crate) fn emit_instance_created_log(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance: &ServerInstance,
+) -> Result<(), String> {
+    let config_dir = ark_config::config_dir(instance);
+    emit_instance_log(
+        app,
+        runtime,
+        &instance.name,
+        "success",
+        &format!(
+            "已创建服务器实例，初始 ARK 配置已写入：{}、{}、{}",
+            config_dir.join("GameUserSettings.ini").to_string_lossy(),
+            config_dir.join("Game.ini").to_string_lossy(),
+            config_dir.join("Engine.ini").to_string_lossy()
+        ),
+    )
 }
 
 #[tauri::command]

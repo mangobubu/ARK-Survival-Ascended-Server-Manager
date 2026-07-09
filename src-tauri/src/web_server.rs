@@ -2,6 +2,7 @@ mod routing;
 
 use crate::{
     app_state::AppRuntime,
+    command_events::emit_instance_log,
     models::GlobalSettings,
     web_auth_state::WebAuthState,
     web_http::{json_response, read_request, write_response},
@@ -35,7 +36,7 @@ impl WebServerManager {
         settings: &GlobalSettings,
     ) -> Result<(), String> {
         if !settings.web_management_enabled {
-            self.stop_current_best_effort(Some(&runtime));
+            self.stop_current_best_effort(&app, Some(&runtime));
             return Ok(());
         }
 
@@ -51,7 +52,7 @@ impl WebServerManager {
             return Ok(());
         }
 
-        self.stop_current_best_effort(Some(&runtime));
+        self.stop_current_best_effort(&app, Some(&runtime));
         let handle = spawn_web_server(app, runtime, desired_port)?;
         let mut active = self
             .active
@@ -61,17 +62,19 @@ impl WebServerManager {
         Ok(())
     }
 
-    pub fn shutdown(&self, runtime: Option<&AppRuntime>) {
-        self.stop_current_best_effort(runtime);
+    pub fn shutdown(&self, app: &AppHandle, runtime: Option<&AppRuntime>) {
+        self.stop_current_best_effort(app, runtime);
     }
 
-    fn stop_current_best_effort(&self, runtime: Option<&AppRuntime>) {
+    fn stop_current_best_effort(&self, app: &AppHandle, runtime: Option<&AppRuntime>) {
         let current = self.active.lock().ok().and_then(|mut active| active.take());
         if let Some(handle) = current {
             let port = handle.port;
             let _ = handle.shutdown.send(());
             if let Some(runtime) = runtime {
-                let _ = runtime.add_log(
+                let _ = emit_instance_log(
+                    app,
+                    runtime,
                     "Web服务",
                     "info",
                     &format!("Web 管理已关闭，端口 {port} 停止监听"),
@@ -94,7 +97,7 @@ pub fn apply_settings_from_app(app: &AppHandle, settings: &GlobalSettings) -> Re
 pub fn shutdown(app: &AppHandle) {
     let runtime = app.try_state::<AppRuntime>();
     if let Some(manager) = app.try_state::<WebServerManager>() {
-        manager.shutdown(runtime.as_deref());
+        manager.shutdown(app, runtime.as_deref());
     }
 }
 
@@ -115,7 +118,9 @@ fn spawn_web_server(
         let listener = match TcpListener::from_std(listener) {
             Ok(listener) => listener,
             Err(error) => {
-                let _ = runtime.add_log(
+                let _ = emit_instance_log(
+                    &app,
+                    &runtime,
                     "Web服务",
                     "error",
                     &format!("Web 管理启动失败，无法接管端口 {port}：{error}"),
@@ -124,7 +129,9 @@ fn spawn_web_server(
             }
         };
         let auth_state = WebAuthState::default();
-        let _ = runtime.add_log(
+        let _ = emit_instance_log(
+            &app,
+            &runtime,
             "Web服务",
             "success",
             &format!("Web 管理已启动：http://127.0.0.1:{port}"),
@@ -146,7 +153,9 @@ fn spawn_web_server(
                             });
                         }
                         Err(error) => {
-                            let _ = runtime.add_log(
+                            let _ = emit_instance_log(
+                                &app,
+                                &runtime,
                                 "Web服务",
                                 "warn",
                                 &format!("接受 Web 连接失败：{error}"),

@@ -72,11 +72,6 @@ impl AppRuntime {
             removed
         };
         self.persist()?;
-        self.add_log(
-            &removed.name,
-            "warn",
-            &format!("已删除实例记录，实例文件仍保留在：{}", removed.install_path),
-        )?;
         Ok(removed)
     }
 
@@ -137,7 +132,7 @@ impl AppRuntime {
 
         let config = normalize_required_rcon_config(config_from_payload(&payload, &instance))?;
         let mods = sanitize_imported_mods(&payload);
-        let applied_config = ark_config::apply_instance_config(&instance, &config, &mods)?;
+        ark_config::apply_instance_config(&instance, &config, &mods)?;
 
         {
             let mut data = self.lock()?;
@@ -145,16 +140,6 @@ impl AppRuntime {
             data.mods.insert(id.clone(), mods);
             data.instances.push(instance.clone());
         }
-        self.add_log(
-            &instance.name,
-            "success",
-            &format!(
-                "已创建服务器实例，初始 ARK 配置已写入：{}、{}、{}",
-                applied_config.game_user_settings_path.to_string_lossy(),
-                applied_config.game_ini_path.to_string_lossy(),
-                applied_config.engine_ini_path.to_string_lossy()
-            ),
-        )?;
         self.persist()?;
         Ok(instance)
     }

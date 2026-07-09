@@ -114,7 +114,9 @@ pub(crate) async fn start_instance_for_runtime(
     }
     attach_server_log_file_reader(&app, &runtime, &instance, server_log_deduper);
 
-    runtime.add_log(
+    emit_instance_log(
+        &app,
+        &runtime,
         &instance.name,
         "success",
         &format!("实例启动命令已执行，PID：{}", pid.unwrap_or_default()),
