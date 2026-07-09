@@ -1,5 +1,13 @@
 # 更新日志
 
+## v0.3.4
+
+- 修复应用左下角页脚长期硬编码显示 `v0.1.0 Rust Backend`，导致版本号不随发布版本变化的问题。
+- 改为通过 Vite 构建期从 `package.json` 注入前端版本常量，页脚统一展示当前应用版本，避免后续版本展示再次漂移。
+- 同步 `package.json`、`package-lock.json`、Tauri 配置、Cargo 包信息与锁文件版本至 `0.3.4`。
+- 补充前端 `__APP_VERSION__` 类型声明，保持 TypeScript 严格类型检查通过。
+- 完成 `npm run build`、`npm run check:config-metadata`、`cargo test` 验证，并启动本地 Vite 页面通过浏览器确认页面加载与构建产物版本文案。
+
 ## v0.3.3
 
 - 修复 OpenResty for Windows 启动时使用相对 Lua 路径，导致 `asa_security` 安全网关脚本无法加载、域名反向代理无法访问的问题。

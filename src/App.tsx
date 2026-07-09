@@ -97,6 +97,7 @@ import { ADD_INSTANCE_WINDOW_LABEL, MAIN_WINDOW_LABEL, RCON_WINDOW_LABEL_PREFIX 
 const { Text } = Typography
 const ConfigPanel = lazy(() => import('./ConfigPanel'))
 const PLAYER_STATUS_POLL_INTERVAL_MS = 5_000
+const appVersionLabel = `v${__APP_VERSION__} Rust Backend`
 
 export default function App() {
   const [instances, setInstances] = useState<ServerInstance[]>([])
@@ -1076,7 +1077,7 @@ export default function App() {
       <AppChildDialog dialog={webDialog} onClose={closeWebDialog} />
 
       <footer className="app-footer">
-        <Text type="secondary">v0.1.0 Rust Backend</Text>
+        <Text type="secondary">{appVersionLabel}</Text>
         <div><span>▣ 上次保存：{dirty ? '存在未保存修改' : '已同步'}</span><span>▧ 配置目录：{selected ? `${selected.installPath}\\ShooterGame\\Saved\\Config\\WindowsServer` : globalSettings.serverStoragePath}</span></div>
       </footer>
     </div>
