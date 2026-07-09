@@ -87,10 +87,8 @@ pub fn handle_main_window_event<R: Runtime>(
                 }
             }
         }
-        WindowEvent::Destroyed => {
-            if !state.is_shutting_down() {
-                request_full_shutdown(window.app_handle(), state);
-            }
+        WindowEvent::Destroyed if !state.is_shutting_down() => {
+            request_full_shutdown(window.app_handle(), state);
         }
         WindowEvent::Focused(true) => {
             tray::apply_tray_visibility_from_runtime(window.app_handle(), state, runtime);

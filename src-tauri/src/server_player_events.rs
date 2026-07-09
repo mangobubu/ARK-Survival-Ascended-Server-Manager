@@ -145,8 +145,8 @@ fn strip_player_word(raw: &str) -> &str {
 
 fn strip_wrapping_marks(raw: &str) -> &str {
     raw.trim()
-        .trim_matches(|ch| matches!(ch, '\'' | '"' | '`' | '“' | '”' | '‘' | '’' | ' ' | '\t'))
-        .trim_end_matches(|ch| matches!(ch, '.' | '!' | ',' | ';'))
+        .trim_matches(['\'', '"', '`', '“', '”', '‘', '’', ' ', '\t'])
+        .trim_end_matches(['.', '!', ',', ';'])
         .trim()
 }
 
