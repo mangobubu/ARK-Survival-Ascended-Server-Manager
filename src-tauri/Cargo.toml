@@ -1,6 +1,6 @@
 [package]
 name = "asa-server-manager"
-version = "0.3.8"
+version = "0.3.9"
 description = "ARK: Survival Ascended server manager prototype"
 authors = ["ASA Server Manager"]
 edition = "2024"
@@ -30,7 +30,7 @@ tauri = { version = "2.11.4", features = ["tray-icon"] }
 tauri-plugin-dialog = "=2.6.0"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
 toml = "0.9"
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Memory", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Diagnostics_Debug", "Win32_System_Memory", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 x509-cert = "0.2.5"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 

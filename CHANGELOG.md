@@ -1,5 +1,13 @@
 # 更新日志
 
+## v0.3.9
+
+- 修复 Windows Server 2016 启动 ARK: Survival Ascended 服务端时，`amd_fidelityfx_dx12.dll` 因 `SetThreadDescription` 链接兼容性触发系统错误弹窗并阻塞启动的问题。
+- 新增 ASA 子进程专用 Windows 错误模式启动封装，通过继承 `SEM_FAILCRITICALERRORS` 等标志抑制会卡住无人值守启动流程的系统模态框。
+- 使用互斥锁串行保护进程级错误模式切换，并通过 RAII 在子进程创建完成后自动恢复管理器原有状态，避免多个实例并发启动时互相污染。
+- 补充真实子进程错误模式继承与父进程恢复回归测试，完成完整 Rust 测试、严格 Clippy 检查、前端生产构建及桌面管理器启动验证。
+- 同步项目版本号至 `0.3.9`，确保前端页脚、Tauri 配置、Cargo 包信息、锁文件和发布标签版本一致。
+
 ## v0.3.8
 
 - 修复 ASA 服务端“采集数量倍率”保存并应用重启后仍可能表现为官方 1x 基础数量的问题，在继续写入 `GameUserSettings.ini` 的 `HarvestAmountMultiplier` 基础上，同步把采集倍率追加到启动 URL，确保本次启动明确使用管理器配置值。

@@ -2,7 +2,7 @@ use crate::{
     app_state::{AppRuntime, normalize_required_rcon_config},
     ark_config,
     asa_server_process::{
-        configure_asa_server_hidden_process, hide_asa_server_windows_after_spawn,
+        configure_asa_server_hidden_process, hide_asa_server_windows_after_spawn, spawn_asa_server,
     },
     command_events::{emit_instance_log, emit_status},
     instance_config_commands,
@@ -72,7 +72,7 @@ pub(crate) async fn start_instance_for_runtime(
 
     configure_asa_server_hidden_process(&mut command);
 
-    let mut child = match command.spawn() {
+    let mut child = match spawn_asa_server(&mut command) {
         Ok(child) => child,
         Err(error) => {
             let error = format!("启动 ASA 服务端失败：{error}");
