@@ -292,6 +292,12 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
           <Field label="平台建筑倍率"><NumberField value={config.platformStructureMultiplier} min={0.1} max={10} step={0.1} onChange={(v) => set('platformStructureMultiplier', v)} addonAfter="x" /></Field>
         </div>
         <Field label="禁用建筑碰撞检测"><Switch checked={config.disablePlacementCollision} onChange={(v) => set('disablePlacementCollision', v)} /></Field>
+        <Field label="PvE 允许在补给箱附近建筑" tip="仅在 PvE 模式生效；允许玩家在补给箱投放点附近放置建筑">
+          <Switch checked={config.pveAllowStructuresAtSupplyDrops} onChange={(v) => set('pveAllowStructuresAtSupplyDrops', v)} />
+        </Field>
+        <Field label="启用重点资源区建筑禁区" tip="开启后禁止在地图预设的资源富集区建筑，不是禁止在所有资源节点周围建筑">
+          <Switch checked={config.enableExtraStructurePreventionVolumes} onChange={(v) => set('enableExtraStructurePreventionVolumes', v)} />
+        </Field>
         <Field label="最大部落人数"><NumberField value={config.maxTribeSize} min={0} max={500} onChange={(v) => set('maxTribeSize', v)} /></Field>
         <Field label="允许部落联盟"><Switch checked={config.tribeAlliances} onChange={(v) => set('tribeAlliances', v)} /></Field>
         <Field label="启用 PvE 建筑衰减"><Switch checked={config.pveStructureDecay} onChange={(v) => set('pveStructureDecay', v)} /></Field>

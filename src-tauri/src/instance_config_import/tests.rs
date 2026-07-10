@@ -26,6 +26,8 @@ OverrideOfficialDifficulty=7.0
 XPMultiplier=3.5
 AllowFlyingStaminaRecovery=True
 CrossARKAllowForeignDinoDownloads=True
+PvEAllowStructuresAtSupplyDrops=True
+EnableExtraStructurePreventionVolumes=True
 PerPlatformMaxStructuresMultiplier=1.5
 TheMaxStructuresInRange=10500
 LimitBunkersPerTribe=True
@@ -85,6 +87,14 @@ MaxClientRate=150000
     assert_eq!(preview.config["xpMultiplier"], json!(3.5));
     assert_eq!(preview.config["rconBufferSize"], json!(9000));
     assert_eq!(preview.config["allowFlyingStaminaRecovery"], json!(true));
+    assert_eq!(
+        preview.config["pveAllowStructuresAtSupplyDrops"],
+        json!(true)
+    );
+    assert_eq!(
+        preview.config["enableExtraStructurePreventionVolumes"],
+        json!(true)
+    );
     assert_eq!(
         preview.config["crossArkAllowForeignDinoDownloads"],
         json!(true)

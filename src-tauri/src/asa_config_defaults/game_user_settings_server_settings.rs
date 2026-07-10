@@ -229,6 +229,16 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
         Target::GameUserSettingsServerSettings,
     ),
     default(
+        "pveAllowStructuresAtSupplyDrops",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "enableExtraStructurePreventionVolumes",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
         "allowFlyingStaminaRecovery",
         DefaultValue::Bool(false),
         Target::GameUserSettingsServerSettings,

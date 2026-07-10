@@ -28,6 +28,14 @@ pub(super) fn read_boolean_settings(document: &IniDocument, config: &mut Map<Str
         ("NoTributeDownloads", "noTributeDownloads"),
         ("AllowCaveBuildingPvE", "allowCaveBuildingPvE"),
         ("AllowCaveBuildingPvP", "allowCaveBuildingPvP"),
+        (
+            "PvEAllowStructuresAtSupplyDrops",
+            "pveAllowStructuresAtSupplyDrops",
+        ),
+        (
+            "EnableExtraStructurePreventionVolumes",
+            "enableExtraStructurePreventionVolumes",
+        ),
         ("EnableIdlePlayerKick", "enableIdlePlayerKick"),
         (
             "AllowAnyoneBabyImprintCuddle",

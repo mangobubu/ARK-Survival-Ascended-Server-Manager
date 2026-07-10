@@ -1,5 +1,14 @@
 # 更新日志
 
+## v0.4.1
+
+- 新增 ASA PvE 补给箱投放点建筑开关，对应 `GameUserSettings.ini` 的 `PvEAllowStructuresAtSupplyDrops`；开启后允许玩家在 PvE 补给箱投放点附近建筑，并在界面中明确标注仅对 PvE 模式生效。
+- 新增 ASA 重点资源区建筑禁区开关，对应 `GameUserSettings.ini` 的 `EnableExtraStructurePreventionVolumes`；开启后禁止在地图预设的资源富集区域建筑，并明确说明该参数不是所有普通资源节点周围的全局禁建开关。
+- 为两个新增配置项补齐前端类型、默认值、配置元数据、`GameUserSettings.ini` 生成与现有配置导入链路，确保新建实例、保存应用和导入已有服务端配置的行为一致。
+- 补充配置生成与导入回归测试，验证两个官方布尔参数能够正确写入 `[ServerSettings]` 并从已有 `GameUserSettings.ini` 恢复到管理器配置。
+- 完成配置元数据一致性校验、前端生产构建、Rust 格式检查、146 项 Rust 测试与严格 Clippy 检查，确认本次配置扩展及 `v0.3.9` 基线功能无回归。
+- 同步项目版本号至 `0.4.1`，确保前端包版本、Tauri 配置、Cargo 包信息、锁文件和发布标签版本一致。
+
 ## v0.3.9
 
 - 修复 Windows Server 2016 启动 ARK: Survival Ascended 服务端时，`amd_fidelityfx_dx12.dll` 因 `SetThreadDescription` 链接兼容性触发系统错误弹窗并阻塞启动的问题。

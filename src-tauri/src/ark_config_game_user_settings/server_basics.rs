@@ -103,6 +103,18 @@ pub(super) fn append_basic_server_settings(
             ini_bool(bool_value(config, "allowCaveBuildingPvP", true))
         ),
         format!(
+            "PvEAllowStructuresAtSupplyDrops={}",
+            ini_bool(bool_value(config, "pveAllowStructuresAtSupplyDrops", false))
+        ),
+        format!(
+            "EnableExtraStructurePreventionVolumes={}",
+            ini_bool(bool_value(
+                config,
+                "enableExtraStructurePreventionVolumes",
+                false
+            ))
+        ),
+        format!(
             "KickIdlePlayersPeriod={}",
             number_u32(config, "kickIdlePlayersPeriod", 3600)
         ),

@@ -316,6 +316,8 @@ export interface ServerConfig {
   structureLimit: number
   platformStructureMultiplier: number
   disablePlacementCollision: boolean
+  pveAllowStructuresAtSupplyDrops: boolean
+  enableExtraStructurePreventionVolumes: boolean
   maxTribeSize: number
   tribeAlliances: boolean
   pveStructureDecay: boolean
