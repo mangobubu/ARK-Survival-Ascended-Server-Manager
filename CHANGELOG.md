@@ -1,5 +1,13 @@
 # 更新日志
 
+## v0.4.2
+
+- 新增 ASA 建筑始终可拾取开关，对应 `GameUserSettings.ini` 的 `AlwaysAllowStructurePickup`；开启后建筑不再受放置后的快速拾取时间窗口限制。
+- 建立建筑拾取配置联动：启用“始终可拾起建筑物”后禁用“建筑可拾取时间”输入，同时保留原数值，关闭开关后可继续使用原有时间设置。
+- 保持 `StructurePickupHoldDuration` 独立可配置，避免把拾取长按触发时长与放置后的可拾取时间窗口混为一谈。
+- 为新参数补齐前端类型、前后端默认值、`GameUserSettings.ini` 生成、已有配置导入与回归测试，确保新建、保存和导入行为一致。
+- 同步项目版本号至 `0.4.2`，确保前端包版本、Tauri 配置、Cargo 包信息、锁文件和发布标签版本一致。
+
 ## v0.4.1
 
 - 新增 ASA PvE 补给箱投放点建筑开关，对应 `GameUserSettings.ini` 的 `PvEAllowStructuresAtSupplyDrops`；开启后允许玩家在 PvE 补给箱投放点附近建筑，并在界面中明确标注仅对 PvE 模式生效。

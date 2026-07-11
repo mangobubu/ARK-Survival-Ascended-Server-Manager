@@ -28,6 +28,7 @@ AllowFlyingStaminaRecovery=True
 CrossARKAllowForeignDinoDownloads=True
 PvEAllowStructuresAtSupplyDrops=True
 EnableExtraStructurePreventionVolumes=True
+AlwaysAllowStructurePickup=True
 PerPlatformMaxStructuresMultiplier=1.5
 TheMaxStructuresInRange=10500
 LimitBunkersPerTribe=True
@@ -95,6 +96,7 @@ MaxClientRate=150000
         preview.config["enableExtraStructurePreventionVolumes"],
         json!(true)
     );
+    assert_eq!(preview.config["alwaysAllowStructurePickup"], json!(true));
     assert_eq!(
         preview.config["crossArkAllowForeignDinoDownloads"],
         json!(true)

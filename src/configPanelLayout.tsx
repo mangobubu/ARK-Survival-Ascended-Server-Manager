@@ -71,6 +71,7 @@ export function NumberField({
   max,
   step = 1,
   addonAfter,
+  disabled = false,
 }: {
   value: number
   onChange: (value: number) => void
@@ -78,16 +79,17 @@ export function NumberField({
   max?: number
   step?: number
   addonAfter?: string
+  disabled?: boolean
 }) {
   if (addonAfter) {
     return (
       <Space.Compact>
-        <InputNumber value={value} min={min} max={max} step={step} onChange={(next) => onChange(next ?? min)} />
+        <InputNumber disabled={disabled} value={value} min={min} max={max} step={step} onChange={(next) => onChange(next ?? min)} />
         <Input value={addonAfter} disabled style={{ width: '48px', textAlign: 'center', padding: '4px 0' }} />
       </Space.Compact>
     )
   }
-  return <InputNumber value={value} min={min} max={max} step={step} onChange={(next) => onChange(next ?? min)} />
+  return <InputNumber disabled={disabled} value={value} min={min} max={max} step={step} onChange={(next) => onChange(next ?? min)} />
 }
 
 type SearchableElementProps = {

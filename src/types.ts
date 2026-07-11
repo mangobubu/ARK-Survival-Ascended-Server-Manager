@@ -324,6 +324,7 @@ export interface ServerConfig {
   allowCaveBuildingPvE: boolean
   allowCaveBuildingPvP: boolean
   structureDamageRepairCooldown: number
+  alwaysAllowStructurePickup: boolean
   structurePickupTimeAfterPlacement: number
   structurePickupHoldDuration: number
   autoDestroyOldStructuresMultiplier: number

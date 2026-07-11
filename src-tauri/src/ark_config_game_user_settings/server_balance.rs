@@ -105,6 +105,10 @@ pub(super) fn append_balance_server_settings(lines: &mut Vec<String>, config: &V
             number_u32(config, "structureLimit", 10_500)
         ),
         format!(
+            "AlwaysAllowStructurePickup={}",
+            ini_bool(bool_value(config, "alwaysAllowStructurePickup", false))
+        ),
+        format!(
             "StructurePickupHoldDuration={}",
             number_f64(config, "structurePickupHoldDuration", 0.5)
         ),

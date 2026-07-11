@@ -304,7 +304,12 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
         <Field label="PvE 洞穴建造"><Switch checked={config.allowCaveBuildingPvE} onChange={(v) => set('allowCaveBuildingPvE', v)} /></Field>
         <Field label="PvP 洞穴建造"><Switch checked={config.allowCaveBuildingPvP} onChange={(v) => set('allowCaveBuildingPvP', v)} /></Field>
         <Field label="建筑维修冷却"><NumberField value={config.structureDamageRepairCooldown} min={0} max={86400} onChange={(v) => set('structureDamageRepairCooldown', v)} addonAfter="秒" /></Field>
-        <Field label="建筑可拾取时间"><NumberField value={config.structurePickupTimeAfterPlacement} min={0} max={86400} onChange={(v) => set('structurePickupTimeAfterPlacement', v)} addonAfter="秒" /></Field>
+        <Field label="始终可拾起建筑物" tip="对应 AlwaysAllowStructurePickup；开启后不再限制建筑放置后的快速拾取时间窗口">
+          <Switch checked={config.alwaysAllowStructurePickup} onChange={(v) => set('alwaysAllowStructurePickup', v)} />
+        </Field>
+        <Field label="建筑可拾取时间" tip={config.alwaysAllowStructurePickup ? '已开启始终可拾起建筑物，此时间窗口不再生效' : '建筑放置后允许快速拾取的时间窗口'}>
+          <NumberField disabled={config.alwaysAllowStructurePickup} value={config.structurePickupTimeAfterPlacement} min={0} max={86400} onChange={(v) => set('structurePickupTimeAfterPlacement', v)} addonAfter="秒" />
+        </Field>
         <Field label="拾取长按时间"><NumberField value={config.structurePickupHoldDuration} min={0} max={60} step={0.1} onChange={(v) => set('structurePickupHoldDuration', v)} addonAfter="秒" /></Field>
         <Field label="旧建筑摧毁周期"><NumberField value={config.autoDestroyOldStructuresMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('autoDestroyOldStructuresMultiplier', v)} addonAfter="x" /></Field>
         <Field label="孤立建筑快速衰减"><Switch checked={config.fastDecayUnsnappedCoreStructures} onChange={(v) => set('fastDecayUnsnappedCoreStructures', v)} /></Field>

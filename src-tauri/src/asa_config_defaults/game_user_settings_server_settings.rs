@@ -239,6 +239,11 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
         Target::GameUserSettingsServerSettings,
     ),
     default(
+        "alwaysAllowStructurePickup",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
         "allowFlyingStaminaRecovery",
         DefaultValue::Bool(false),
         Target::GameUserSettingsServerSettings,

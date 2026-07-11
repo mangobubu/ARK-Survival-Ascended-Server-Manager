@@ -36,6 +36,7 @@ pub(super) fn read_boolean_settings(document: &IniDocument, config: &mut Map<Str
             "EnableExtraStructurePreventionVolumes",
             "enableExtraStructurePreventionVolumes",
         ),
+        ("AlwaysAllowStructurePickup", "alwaysAllowStructurePickup"),
         ("EnableIdlePlayerKick", "enableIdlePlayerKick"),
         (
             "AllowAnyoneBabyImprintCuddle",
