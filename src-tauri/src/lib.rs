@@ -31,6 +31,7 @@ mod instance_config_import_mapping;
 mod instance_config_import_paths;
 mod instance_config_import_readers;
 mod instance_data_commands;
+mod instance_file_manager;
 mod instance_query_commands;
 mod instance_runtime_config;
 mod models;

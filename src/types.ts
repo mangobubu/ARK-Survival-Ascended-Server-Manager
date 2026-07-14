@@ -236,6 +236,26 @@ export interface ImportResult {
   skippedInstances: number
 }
 
+export type InstanceFileEntryType = 'directory' | 'file' | 'other'
+
+export interface InstanceFileEntry {
+  name: string
+  path: string
+  entryType: InstanceFileEntryType
+  sizeBytes: number | null
+  modifiedAt: number | null
+  hasChildren: boolean
+}
+
+export interface InstanceDirectoryListing {
+  rootPath: string
+  currentPath: string
+  parentPath: string | null
+  entries: InstanceFileEntry[]
+  totalEntries: number
+  truncated: boolean
+}
+
 export interface ServerConfig {
   sessionName: string
   serverPassword: string

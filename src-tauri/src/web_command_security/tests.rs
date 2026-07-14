@@ -21,6 +21,8 @@ fn 影响实例状态和审计状态的命令归类为高风险() {
         "clear_logs",
         "clear_scoped_logs",
         "unban_web_security_ip",
+        "import_instance_config_upload",
+        "delete_instance_file_entry",
     ] {
         assert!(
             matches!(web_command_policy(command), Ok(WebCommandRisk::High)),

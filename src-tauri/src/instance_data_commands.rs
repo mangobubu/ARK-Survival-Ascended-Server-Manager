@@ -95,6 +95,19 @@ pub(crate) fn export_cluster_for_runtime(runtime: &AppRuntime) -> Result<ExportR
     import_export::export_instances(runtime, Vec::new())
 }
 
+pub(crate) fn export_instance_config_for_web_transfer(
+    runtime: &AppRuntime,
+    instance_ids: Vec<String>,
+) -> Result<import_export::ExportTransfer, String> {
+    import_export::export_instances_for_transfer(runtime, instance_ids)
+}
+
+pub(crate) fn export_cluster_for_web_transfer(
+    runtime: &AppRuntime,
+) -> Result<import_export::ExportTransfer, String> {
+    import_export::export_instances_for_transfer(runtime, Vec::new())
+}
+
 pub(crate) fn import_instance_config_for_runtime(
     app: &AppHandle,
     runtime: &AppRuntime,
@@ -102,6 +115,18 @@ pub(crate) fn import_instance_config_for_runtime(
 ) -> Result<ImportResult, String> {
     let path = path_security::ensure_managed_path_allowed(runtime, Path::new(&path))?;
     let result = import_export::import_instances(runtime, &path)?;
+    if result.imported_instances > 0 {
+        publish_instances_changed(app);
+    }
+    Ok(result)
+}
+
+pub(crate) fn import_instance_config_content_for_runtime(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    content: &str,
+) -> Result<ImportResult, String> {
+    let result = import_export::import_instances_from_content(runtime, content)?;
     if result.imported_instances > 0 {
         publish_instances_changed(app);
     }

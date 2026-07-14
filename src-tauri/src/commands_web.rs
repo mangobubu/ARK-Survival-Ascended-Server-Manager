@@ -1,8 +1,8 @@
 mod config;
 mod data;
+mod file_manager;
 mod instances;
 mod logs;
-mod open_paths;
 mod settings;
 mod support;
 
@@ -61,12 +61,19 @@ pub(crate) async fn handle_web_invoke(
         "create_backup" => data::create_backup(&app, &runtime, &args),
         "list_backups" => data::list_backups(&runtime, &args),
         "restore_backup" => data::restore_backup(&app, &runtime, &args),
-        "export_instance_config" => data::export_instance_config(&runtime, &args),
-        "export_cluster" => data::export_cluster(&runtime),
-        "import_instance_config" => data::import_instance_config(&app, &runtime, &args),
+        "export_instance_config_for_download" => {
+            data::export_instance_config_for_download(&runtime, &args)
+        }
+        "export_cluster_for_download" => data::export_cluster_for_download(&runtime),
+        "import_instance_config_upload" => {
+            data::import_instance_config_upload(&app, &runtime, &args)
+        }
+        "list_instance_files" => file_manager::list_instance_files(&runtime, &args),
+        "create_instance_file_entry" => file_manager::create_instance_file_entry(&runtime, &args),
+        "rename_instance_file_entry" => file_manager::rename_instance_file_entry(&runtime, &args),
+        "copy_instance_file_entry" => file_manager::copy_instance_file_entry(&runtime, &args),
+        "delete_instance_file_entry" => file_manager::delete_instance_file_entry(&runtime, &args),
         "delete_instance" => instances::delete_instance(&app, &runtime, &args),
-        "open_instance_directory" => open_paths::open_instance_directory(&runtime, &args),
-        "open_directory_path" => open_paths::open_directory_path(&runtime, &args),
         _ => Err(format!("未知 Web API 命令：{command}")),
     }
 }

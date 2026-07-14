@@ -43,6 +43,7 @@ import {
 } from './jobProgressView'
 import InstanceTable from './InstanceTable'
 import AppChildDialog, { type WebDialogState } from './AppChildDialog'
+import WebInstanceFileManagerDialog from './WebInstanceFileManagerDialog'
 import {
   applyInstanceConfig,
   checkModUpdates,
@@ -57,6 +58,7 @@ import {
   getInstanceConfig,
   getInstanceMods,
   importInstanceConfig,
+  importInstanceConfigFile,
   installOrUpdateInstance,
   listInstances,
   openDirectoryPath,
@@ -116,6 +118,8 @@ export default function App() {
   const [autoScrollLogs, setAutoScrollLogs] = useState(true)
   const [activeLogTab, setActiveLogTab] = useState(APPLICATION_LOG_TAB_KEY)
   const [webDialog, setWebDialog] = useState<WebDialogState>(null)
+  const [webFileManagerInstance, setWebFileManagerInstance] = useState<ServerInstance | null>(null)
+  const webImportInputRef = useRef<HTMLInputElement>(null)
   const applicationLogConsoleRef = useRef<HTMLDivElement>(null)
   const serverConsoleLogConsoleRef = useRef<HTMLDivElement>(null)
   const serverFileLogConsoleRef = useRef<HTMLDivElement>(null)
@@ -836,7 +840,11 @@ export default function App() {
   const exportSelected = async () => {
     try {
       const result = await exportInstanceConfig(selectedRows.map(String))
-      messageApi.success(`已导出 ${result.exportedInstances} 个实例：${result.path}`)
+      messageApi.success(
+        isTauriRuntime()
+          ? `已导出 ${result.exportedInstances} 个实例：${result.path}`
+          : `已下载 ${result.exportedInstances} 个实例配置：${result.path}`,
+      )
     } catch (error) {
       messageApi.error(`导出实例失败：${String(error)}`)
     }
@@ -845,7 +853,11 @@ export default function App() {
   const exportAll = async () => {
     try {
       const result = await exportCluster()
-      messageApi.success(`已导出整个集群：${result.path}`)
+      messageApi.success(
+        isTauriRuntime()
+          ? `已导出整个集群：${result.path}`
+          : `已下载整个集群配置：${result.path}`,
+      )
     } catch (error) {
       messageApi.error(`导出集群失败：${String(error)}`)
     }
@@ -854,7 +866,7 @@ export default function App() {
   const importConfig = async () => {
     try {
       if (!isTauriRuntime()) {
-        messageApi.info('Web 版无法打开系统文件选择器，请在桌面端导入实例配置')
+        webImportInputRef.current?.click()
         return
       }
       const selectedPath = await open({
@@ -871,6 +883,30 @@ export default function App() {
     }
   }
 
+  const importWebConfigFile = async (file: File) => {
+    try {
+      const result = await importInstanceConfigFile(file)
+      await loadInstances()
+      messageApi.success(`已上传并导入 ${result.importedInstances} 个实例，跳过 ${result.skippedInstances} 个重复实例`)
+    } catch (error) {
+      const text = String(error)
+      if (text.includes('已取消高风险 Web 管理操作')) {
+        messageApi.info('已取消导入')
+      } else {
+        messageApi.error(`导入实例失败：${text}`)
+      }
+    }
+  }
+
+  const openManagedInstanceDirectory = useCallback((item: ServerInstance) => {
+    if (!isTauriRuntime()) {
+      setWebFileManagerInstance(item)
+      return
+    }
+    void openInstanceDirectory(item.id)
+      .catch((error) => messageApi.error(`打开目录失败：${String(error)}`))
+  }, [messageApi])
+
   const refreshSelectedStatus = async () => {
     try {
       if (selected) replaceInstance(await refreshInstanceStatus(selected.id))
@@ -883,6 +919,21 @@ export default function App() {
   }
 
   const askOpenDeletedInstanceDirectory = useCallback((item: ServerInstance) => {
+    if (!isTauriRuntime()) {
+      modal.info({
+        title: '实例文件仍保留在服务端主机',
+        icon: <FolderOpenOutlined className="confirm-blue-icon" />,
+        content: (
+          <Space direction="vertical" size={8}>
+            <Text>实例记录已删除。由于该目录不再绑定实例，Web 文件管理器不会继续开放操作。</Text>
+            <Text code copyable={{ text: item.installPath }}>{item.installPath}</Text>
+          </Space>
+        ),
+        okText: '知道了',
+      })
+      return
+    }
+
     modal.confirm({
       title: '是否打开保留的实例文件夹？',
       icon: <FolderOpenOutlined className="confirm-blue-icon" />,
@@ -976,9 +1027,8 @@ export default function App() {
   }, [messageApi])
 
   const openInstanceDirectoryFromTable = useCallback((item: ServerInstance) => {
-    void openInstanceDirectory(item.id)
-      .catch((error) => messageApi.error(`打开目录失败：${String(error)}`))
-  }, [messageApi])
+    openManagedInstanceDirectory(item)
+  }, [openManagedInstanceDirectory])
 
   const closeWebDialog = () => setWebDialog(null)
 
@@ -1071,12 +1121,28 @@ export default function App() {
           onExportSelected={() => void exportSelected()}
           onExportAll={() => void exportAll()}
           onCreateSelectedBackup={() => void createSelectedBackup()}
-          onOpenSelectedDirectory={() => selected && void openInstanceDirectory(selected.id).catch((error) => messageApi.error(`打开目录失败：${String(error)}`))}
+          onOpenSelectedDirectory={() => selected && openManagedInstanceDirectory(selected)}
           onDeleteSelected={() => selected && deleteInstanceRecord(selected)}
         />
       </main>
 
+      <input
+        ref={webImportInputRef}
+        accept=".json,application/json"
+        className="web-import-file-input"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0]
+          event.currentTarget.value = ''
+          if (file) void importWebConfigFile(file)
+        }}
+        type="file"
+      />
+
       <AppChildDialog dialog={webDialog} onClose={closeWebDialog} />
+      <WebInstanceFileManagerDialog
+        instance={webFileManagerInstance}
+        onClose={() => setWebFileManagerInstance(null)}
+      />
 
       <footer className="app-footer">
         <Text type="secondary">{appVersionLabel}</Text>

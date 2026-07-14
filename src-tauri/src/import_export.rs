@@ -15,11 +15,37 @@ struct ExportDocument {
     instances: Vec<InstanceConfigBundle>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExportTransfer {
+    pub(crate) file_name: String,
+    pub(crate) content: String,
+    pub(crate) exported_instances: usize,
+}
+
 pub fn export_instances(
     runtime: &AppRuntime,
     instance_ids: Vec<String>,
 ) -> Result<ExportResult, String> {
+    let transfer = export_instances_for_transfer(runtime, instance_ids)?;
     let settings = runtime.settings()?;
+    let export_dir = Path::new(&settings.backup_storage_path).join("exports");
+    fs::create_dir_all(&export_dir)
+        .map_err(|error| format!("无法创建导出目录 {}：{error}", export_dir.display()))?;
+    let export_path = export_dir.join(&transfer.file_name);
+    fs::write(&export_path, transfer.content)
+        .map_err(|error| format!("无法写入导出文件 {}：{error}", export_path.display()))?;
+
+    Ok(ExportResult {
+        path: export_path.to_string_lossy().into_owned(),
+        exported_instances: transfer.exported_instances,
+    })
+}
+
+pub(crate) fn export_instances_for_transfer(
+    runtime: &AppRuntime,
+    instance_ids: Vec<String>,
+) -> Result<ExportTransfer, String> {
     let snapshot = runtime.snapshot()?;
     let selected = if instance_ids.is_empty() {
         snapshot.instances
@@ -52,23 +78,19 @@ pub fn export_instances(
         })
         .collect::<Vec<_>>();
 
-    let export_dir = Path::new(&settings.backup_storage_path).join("exports");
-    fs::create_dir_all(&export_dir)
-        .map_err(|error| format!("无法创建导出目录 {}：{error}", export_dir.display()))?;
-    let export_path = export_dir.join(format!("asa-export-{}.json", current_timestamp_text()));
+    let exported_at = current_timestamp_text();
     let exported_instances = bundles.len();
     let document = ExportDocument {
         schema_version: 1,
-        exported_at: current_timestamp_text(),
+        exported_at: exported_at.clone(),
         instances: bundles,
     };
     let content = serde_json::to_string_pretty(&document)
         .map_err(|error| format!("无法序列化导出文件：{error}"))?;
-    fs::write(&export_path, content)
-        .map_err(|error| format!("无法写入导出文件 {}：{error}", export_path.display()))?;
 
-    Ok(ExportResult {
-        path: export_path.to_string_lossy().into_owned(),
+    Ok(ExportTransfer {
+        file_name: format!("asa-export-{exported_at}.json"),
+        content,
         exported_instances,
     })
 }
@@ -105,6 +127,19 @@ pub fn import_instances(runtime: &AppRuntime, path: &Path) -> Result<ImportResul
         .map_err(|error| format!("无法读取导入文件 {}：{error}", path.display()))?;
     let document: ExportDocument = serde_json::from_str(&content)
         .map_err(|error| format!("导入文件格式无效 {}：{error}", path.display()))?;
+    import_document(runtime, document)
+}
+
+pub(crate) fn import_instances_from_content(
+    runtime: &AppRuntime,
+    content: &str,
+) -> Result<ImportResult, String> {
+    let document: ExportDocument =
+        serde_json::from_str(content).map_err(|error| format!("JSON 解析失败：{error}"))?;
+    import_document(runtime, document)
+}
+
+fn import_document(runtime: &AppRuntime, document: ExportDocument) -> Result<ImportResult, String> {
     if document.schema_version != 1 {
         return Err(format!("不支持的导入文件版本：{}", document.schema_version));
     }

@@ -55,6 +55,11 @@ const WEB_COMMAND_POLICIES: &[WebCommandPolicy] = &[
     policy("query_logs", "查询日志", WebCommandRisk::Read),
     policy("list_backups", "读取备份列表", WebCommandRisk::Read),
     policy(
+        "list_instance_files",
+        "浏览实例目录文件",
+        WebCommandRisk::Read,
+    ),
+    policy(
         "ensure_storage_directories",
         "检查并创建存储目录",
         WebCommandRisk::Write,
@@ -67,17 +72,30 @@ const WEB_COMMAND_POLICIES: &[WebCommandPolicy] = &[
     ),
     policy("create_backup", "创建备份", WebCommandRisk::Write),
     policy(
-        "export_instance_config",
-        "导出实例配置",
+        "export_instance_config_for_download",
+        "下载所选实例配置",
         WebCommandRisk::Write,
     ),
-    policy("export_cluster", "导出集群配置", WebCommandRisk::Write),
     policy(
-        "open_instance_directory",
-        "打开实例目录",
+        "export_cluster_for_download",
+        "下载整个集群配置",
         WebCommandRisk::Write,
     ),
-    policy("open_directory_path", "打开指定目录", WebCommandRisk::Write),
+    policy(
+        "create_instance_file_entry",
+        "在实例目录中新建文件或文件夹",
+        WebCommandRisk::Write,
+    ),
+    policy(
+        "rename_instance_file_entry",
+        "重命名实例目录项",
+        WebCommandRisk::Write,
+    ),
+    policy(
+        "copy_instance_file_entry",
+        "复制实例目录项",
+        WebCommandRisk::Write,
+    ),
     policy(
         "install_steamcmd",
         "安装或初始化 SteamCMD",
@@ -122,8 +140,13 @@ const WEB_COMMAND_POLICIES: &[WebCommandPolicy] = &[
     ),
     policy("restore_backup", "恢复备份", WebCommandRisk::High),
     policy(
-        "import_instance_config",
-        "导入实例配置",
+        "import_instance_config_upload",
+        "上传并导入实例配置",
+        WebCommandRisk::High,
+    ),
+    policy(
+        "delete_instance_file_entry",
+        "删除实例目录中的文件或文件夹",
         WebCommandRisk::High,
     ),
     policy("delete_instance", "删除实例", WebCommandRisk::High),

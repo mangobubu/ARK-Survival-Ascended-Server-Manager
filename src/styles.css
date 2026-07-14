@@ -685,6 +685,7 @@ button, input, textarea { font: inherit; }
 .quick-actions__buttons .ant-btn > span:not(.ant-btn-icon) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quick-actions__buttons .green-button { color: #16d17c; border-color: #105439; background: rgba(7, 38, 29, .65); }
 .quick-actions__buttons .gold-button { color: #ffc225; border-color: #6e530f; background: rgba(54, 43, 8, .5); }
+.web-import-file-input { display: none; }
 
 .app-footer { min-height: 36px; flex: 0 0 36px; margin: 0 18px 8px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; gap: 20px; border: 1px solid #103149; border-radius: 5px; background: linear-gradient(90deg, #041321, #03101c); font-size: 10px; }
 .app-footer > div { display: flex; gap: 30px; color: #71899c; }
@@ -1090,6 +1091,146 @@ button, input, textarea { font: inherit; }
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.web-instance-file-manager .ant-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.web-instance-file-manager__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.web-instance-file-manager__title .anticon { color: #16b8ff; }
+
+.web-instance-file-manager__intro {
+  padding: 9px 11px;
+  border: 1px solid rgba(22, 184, 255, .2);
+  border-radius: 6px;
+  color: #89a5b8;
+  background: rgba(5, 31, 51, .58);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.web-instance-file-manager__toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  gap: 8px;
+}
+
+.web-instance-file-manager__list {
+  min-height: 360px;
+  max-height: min(52vh, 560px);
+  overflow: auto;
+  border: 1px solid #113550;
+  border-radius: 7px;
+  background:
+    linear-gradient(rgba(8, 31, 49, .2) 1px, transparent 1px),
+    rgba(2, 13, 23, .72);
+  background-size: 100% 45px;
+  scrollbar-color: #1a4d6d rgba(3, 15, 26, .55);
+  scrollbar-width: thin;
+}
+
+.web-instance-file-manager__list .ant-spin-nested-loading,
+.web-instance-file-manager__list .ant-spin-container {
+  min-height: 358px;
+}
+
+.web-instance-file-manager__list .ant-empty {
+  margin-block: 116px;
+}
+
+.web-instance-file-manager__entry.ant-list-item {
+  min-height: 45px;
+  padding: 7px 12px;
+  border-block-end-color: #0c263a !important;
+  cursor: default;
+  transition: background .16s ease;
+  user-select: none;
+}
+
+.web-instance-file-manager__entry.ant-list-item:hover {
+  background: rgba(22, 184, 255, .075);
+}
+
+.web-instance-file-manager__folder-icon,
+.web-instance-file-manager__file-icon {
+  font-size: 21px;
+}
+
+.web-instance-file-manager__folder-icon { color: #16b8ff; }
+.web-instance-file-manager__file-icon { color: #8fa8ba; }
+.web-instance-file-manager__entry--other { opacity: .58; }
+
+.web-instance-file-manager__entry-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  color: #dceaf5;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-instance-file-manager__entry-description {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  color: #668399;
+  font-size: 10px;
+}
+
+.web-instance-file-manager__entry-description span:first-child {
+  min-width: 135px;
+}
+
+.web-instance-file-manager__status {
+  min-height: 32px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #12344e;
+  border-radius: 6px;
+  color: #7591a5;
+  background: rgba(3, 18, 30, .72);
+  font-size: 11px;
+}
+
+.web-instance-file-manager__status > span:last-child {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-instance-file-manager__status strong {
+  overflow: hidden;
+  color: #b6ddf4;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 860px) {
+  .web-instance-file-manager__toolbar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .web-instance-file-manager__toolbar > .ant-space-compact:last-child {
+    grid-column: 1 / -1;
+  }
 }
 
 /* Global settings window */
@@ -2143,6 +2284,50 @@ html.theme-light .web-host-directory-picker__selected {
 
 html.theme-light .web-host-directory-picker__selected strong {
   color: #17613d;
+}
+
+html.theme-light .web-instance-file-manager__intro {
+  border-color: #c7d9e7;
+  color: #53677a;
+  background: #f6faff;
+}
+
+html.theme-light .web-instance-file-manager__list {
+  border-color: #c9d9e6;
+  background:
+    linear-gradient(#edf4f9 1px, transparent 1px),
+    #fbfdff;
+  background-size: 100% 45px;
+}
+
+html.theme-light .web-instance-file-manager__entry.ant-list-item {
+  border-block-end-color: #dbe7f0 !important;
+}
+
+html.theme-light .web-instance-file-manager__entry.ant-list-item:hover {
+  background: #f2f9ff;
+}
+
+html.theme-light .web-instance-file-manager__entry-title {
+  color: #172433;
+}
+
+html.theme-light .web-instance-file-manager__entry-description {
+  color: #647789;
+}
+
+html.theme-light .web-instance-file-manager__file-icon {
+  color: #6f8496;
+}
+
+html.theme-light .web-instance-file-manager__status {
+  border-color: #c9d9e6;
+  color: #637688;
+  background: #f7fbfe;
+}
+
+html.theme-light .web-instance-file-manager__status strong {
+  color: #235879;
 }
 
 html.theme-light .item-stack-editor-table th,

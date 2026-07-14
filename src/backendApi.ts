@@ -9,6 +9,7 @@ import type {
   HostDirectoryListing,
   ImportResult,
   ImportedServerConfigPreview,
+  InstanceDirectoryListing,
   InstancePortKind,
   JobProgress,
   LogClearScope,
@@ -55,6 +56,14 @@ interface WebCommandSecurityPolicy {
   label: string
   risk: WebCommandRisk
 }
+
+interface WebExportTransfer {
+  fileName: string
+  content: string
+  exportedInstances: number
+}
+
+const MAX_INSTANCE_CONFIG_UPLOAD_BYTES = 8 * 1024 * 1024
 
 let webCommandSecurityPoliciesPromise: Promise<Map<string, WebCommandSecurityPolicy>> | null = null
 
@@ -157,7 +166,7 @@ async function loadWebCommandSecurityPolicies() {
 
 async function requestWebRiskConfirmation(policy: WebCommandSecurityPolicy) {
   const confirmed = window.confirm(
-    `即将执行高风险 Web 管理操作：${policy.label}\n\n该操作可能修改服务器配置、执行 RCON、恢复备份或删除实例。确认继续吗？`,
+    `即将执行高风险 Web 管理操作：${policy.label}\n\n该操作可能修改服务器配置、执行 RCON、恢复备份，或删除实例及其目录内容。确认继续吗？`,
   )
   if (!confirmed) {
     throw new Error('已取消高风险 Web 管理操作')
@@ -263,12 +272,73 @@ export const listBackups = (instanceId: string) => invokeCommand<BackupItem[]>('
 export const restoreBackup = (instanceId: string, backupPath: string) =>
   invokeCommand<void>('restore_backup', { instanceId, backupPath })
 
-export const exportInstanceConfig = (instanceIds: string[]) =>
-  invokeCommand<ExportResult>('export_instance_config', { instanceIds })
+function downloadWebExport(transfer: WebExportTransfer): ExportResult {
+  const blob = new Blob([transfer.content], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = transfer.fileName
+  anchor.style.display = 'none'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  return {
+    path: transfer.fileName,
+    exportedInstances: transfer.exportedInstances,
+  }
+}
 
-export const exportCluster = () => invokeCommand<ExportResult>('export_cluster')
+export const exportInstanceConfig = async (instanceIds: string[]) => {
+  if (isTauriRuntime()) {
+    return invoke<ExportResult>('export_instance_config', { instanceIds })
+  }
+  const transfer = await webInvoke<WebExportTransfer>('export_instance_config_for_download', { instanceIds })
+  return downloadWebExport(transfer)
+}
+
+export const exportCluster = async () => {
+  if (isTauriRuntime()) return invoke<ExportResult>('export_cluster')
+  const transfer = await webInvoke<WebExportTransfer>('export_cluster_for_download', {})
+  return downloadWebExport(transfer)
+}
 
 export const importInstanceConfig = (path: string) => invokeCommand<ImportResult>('import_instance_config', { path })
+
+export const importInstanceConfigFile = async (file: File) => {
+  if (isTauriRuntime()) {
+    throw new Error('桌面端导入实例配置应使用系统文件选择器')
+  }
+  if (!file.name.toLowerCase().endsWith('.json')) {
+    throw new Error('Web 导入仅支持 .json 格式的 ASA 实例导出文件')
+  }
+  if (file.size > MAX_INSTANCE_CONFIG_UPLOAD_BYTES) {
+    throw new Error(`Web 导入文件不能超过 ${MAX_INSTANCE_CONFIG_UPLOAD_BYTES / 1024 / 1024} MB`)
+  }
+  return webInvoke<ImportResult>('import_instance_config_upload', {
+    fileName: file.name,
+    content: await file.text(),
+  })
+}
+
+export const listInstanceFiles = (instanceId: string, path?: string | null) =>
+  invokeCommand<InstanceDirectoryListing>('list_instance_files', { instanceId, path: path ?? null })
+
+export const createInstanceFileEntry = (
+  instanceId: string,
+  parentPath: string,
+  name: string,
+  entryType: 'directory' | 'file',
+) => invokeCommand<string>('create_instance_file_entry', { instanceId, parentPath, name, entryType })
+
+export const renameInstanceFileEntry = (instanceId: string, path: string, newName: string) =>
+  invokeCommand<string>('rename_instance_file_entry', { instanceId, path, newName })
+
+export const copyInstanceFileEntry = (instanceId: string, sourcePath: string, targetDirectory: string) =>
+  invokeCommand<string>('copy_instance_file_entry', { instanceId, sourcePath, targetDirectory })
+
+export const deleteInstanceFileEntry = (instanceId: string, path: string) =>
+  invokeCommand<void>('delete_instance_file_entry', { instanceId, path })
 
 export const deleteInstance = (instanceId: string) => invokeCommand<ServerInstance>('delete_instance', { instanceId })
 
