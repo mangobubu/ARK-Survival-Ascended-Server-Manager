@@ -12,6 +12,7 @@ mod app_state;
 mod ark_config;
 mod ark_config_game_user_settings;
 mod ark_config_ini;
+mod ark_config_ini_merge;
 mod ark_config_launch;
 mod ark_config_mods;
 mod ark_config_values;
@@ -22,6 +23,7 @@ mod backup;
 mod command_events;
 mod commands;
 mod commands_web;
+mod curseforge;
 mod host_directory_browser;
 mod import_export;
 mod instance_config_commands;
@@ -156,6 +158,7 @@ pub fn run() {
             commands::apply_instance_config,
             instance_config_commands::update_instance_mods,
             instance_config_commands::check_mod_updates,
+            curseforge::search_curseforge_mods,
             commands::install_or_update_instance,
             commands::start_instance,
             commands::stop_instance,

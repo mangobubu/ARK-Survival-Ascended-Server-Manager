@@ -11,7 +11,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::PathBuf,
     sync::{Arc, Mutex, atomic::AtomicBool},
@@ -34,6 +34,8 @@ pub struct AppRuntime {
     data_dir: Arc<PathBuf>,
     data: Arc<Mutex<ManagerData>>,
     processes: Arc<Mutex<HashMap<String, Child>>>,
+    configuration_operation: Arc<Mutex<bool>>,
+    lifecycle_operations: Arc<Mutex<HashSet<String>>>,
     update_cancels: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     online_players: Arc<Mutex<HashMap<String, Vec<RconPlayer>>>>,
 }
@@ -71,6 +73,8 @@ impl AppRuntime {
             data_dir: Arc::new(data_dir),
             data: Arc::new(Mutex::new(data)),
             processes: Arc::new(Mutex::new(HashMap::new())),
+            configuration_operation: Arc::new(Mutex::new(false)),
+            lifecycle_operations: Arc::new(Mutex::new(HashSet::new())),
             update_cancels: Arc::new(Mutex::new(HashMap::new())),
             online_players: Arc::new(Mutex::new(HashMap::new())),
         })

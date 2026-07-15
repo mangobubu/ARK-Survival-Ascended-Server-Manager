@@ -11,7 +11,7 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
     default(
         "crossTransfer",
         DefaultValue::Bool(true),
-        Target::ManagerOnly,
+        Target::GameUserSettingsServerSettings,
     ),
     default("autoRestart", DefaultValue::Bool(true), Target::ManagerOnly),
     default(
@@ -19,7 +19,11 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
         DefaultValue::Text("04:00"),
         Target::ManagerOnly,
     ),
-    default("saveInterval", DefaultValue::U32(15), Target::ManagerOnly),
+    default(
+        "saveInterval",
+        DefaultValue::U32(15),
+        Target::GameUserSettingsServerSettings,
+    ),
     default("backupRetention", DefaultValue::U32(7), Target::ManagerOnly),
     default(
         "autoUpdateMods",
@@ -35,12 +39,12 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
     default(
         "destroyWildDinos",
         DefaultValue::Bool(false),
-        Target::ManagerOnly,
+        Target::LaunchArgument,
     ),
     default(
         "tribeAlliances",
         DefaultValue::Bool(true),
-        Target::ManagerOnly,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "processPriority",

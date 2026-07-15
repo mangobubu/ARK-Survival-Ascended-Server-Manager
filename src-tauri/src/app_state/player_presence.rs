@@ -95,6 +95,7 @@ fn is_same_player(left: &RconPlayer, right: &RconPlayer) -> bool {
 mod tests {
     use super::*;
     use crate::app_state::ManagerData;
+    use std::collections::HashSet;
     use std::sync::{Arc, Mutex};
 
     fn test_runtime() -> AppRuntime {
@@ -102,6 +103,8 @@ mod tests {
             data_dir: Arc::new(std::env::temp_dir()),
             data: Arc::new(Mutex::new(ManagerData::default())),
             processes: Arc::new(Mutex::new(HashMap::new())),
+            configuration_operation: Arc::new(Mutex::new(false)),
+            lifecycle_operations: Arc::new(Mutex::new(HashSet::new())),
             update_cancels: Arc::new(Mutex::new(HashMap::new())),
             online_players: Arc::new(Mutex::new(HashMap::new())),
         }

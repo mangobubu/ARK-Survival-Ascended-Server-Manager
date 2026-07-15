@@ -12,6 +12,12 @@ pub(crate) fn prepare_settings_for_save(
     current: &GlobalSettings,
     mut settings: GlobalSettings,
 ) -> Result<GlobalSettings, String> {
+    if settings.curseforge_api_key.trim().is_empty()
+        && !current.curseforge_api_key.trim().is_empty()
+    {
+        settings.curseforge_api_key = current.curseforge_api_key.clone();
+    }
+
     if settings.web_admin_username.trim().is_empty() && settings.web_admin_password.is_empty() {
         settings.web_admin_password.clear();
     } else if settings.web_admin_password.is_empty() {

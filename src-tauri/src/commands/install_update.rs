@@ -16,6 +16,21 @@ pub(crate) async fn install_or_update_instance_inner(
     progress: Channel<JobProgress>,
 ) -> Result<ServerInstance, String> {
     let mut instance = runtime.get_instance(&instance_id)?;
+    if instance.status != ServerStatus::Stopped {
+        return Err(format!(
+            "{} 当前状态不是已停止，请先停止实例再安装/更新",
+            instance.name
+        ));
+    }
+    let update_operation = runtime.begin_update(&instance.id)?;
+    instance = runtime.get_instance(&instance_id)?;
+    if instance.status != ServerStatus::Stopped {
+        return Err(format!(
+            "{} 的状态已发生变化，已取消安装/更新",
+            instance.name
+        ));
+    }
+
     let settings = runtime.settings()?;
     let steamcmd = Path::new(&settings.steam_cmd_path).join("steamcmd.exe");
     if !steamcmd.is_file() {
@@ -34,7 +49,7 @@ pub(crate) async fn install_or_update_instance_inner(
         let _ = emit_status(&app, &runtime, &instance.id);
         return Err(error);
     }
-    let update_cancel = runtime.begin_update(&instance.id)?;
+    let update_cancel = update_operation.cancel_token();
 
     emit_progress(
         &app,
@@ -65,7 +80,6 @@ pub(crate) async fn install_or_update_instance_inner(
         Arc::clone(&update_cancel),
     )
     .await;
-    runtime.finish_update(&instance.id);
     match output {
         Ok(detail) => {
             emit_progress(

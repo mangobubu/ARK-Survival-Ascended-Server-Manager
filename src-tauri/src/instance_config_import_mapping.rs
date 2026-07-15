@@ -151,7 +151,12 @@ fn parse_u16(value: &str) -> Option<u16> {
 }
 
 fn parse_u32(value: &str) -> Option<u32> {
-    value.trim().parse::<u32>().ok()
+    let value = value.trim();
+    value.parse::<u32>().ok().or_else(|| {
+        let number = value.parse::<f64>().ok()?;
+        (number.is_finite() && number >= 0.0 && number <= u32::MAX as f64 && number.fract() == 0.0)
+            .then_some(number as u32)
+    })
 }
 
 fn parse_f64(value: &str) -> Option<f64> {

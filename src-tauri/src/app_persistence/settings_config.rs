@@ -41,18 +41,17 @@ pub(crate) fn settings_config_contains_unprotected_secret(data_dir: &Path) -> Re
         .map_err(|error| format!("无法读取应用配置文件 {}：{error}", path.display()))?;
     let value = toml::from_str::<serde_json::Value>(&content)
         .map_err(|error| format!("应用配置文件格式无效 {}：{error}", path.display()))?;
-    let Some(secret_key) = value
-        .get("webAcmeTencentSecretKey")
-        .and_then(Value::as_str)
-        .map(str::trim)
-    else {
-        return Ok(false);
-    };
-    Ok(!secret_key.is_empty() && !secret_storage::is_protected_secret(secret_key))
+    Ok(["curseforgeApiKey", "webAcmeTencentSecretKey"]
+        .into_iter()
+        .filter_map(|key| value.get(key).and_then(Value::as_str).map(str::trim))
+        .any(|secret| !secret.is_empty() && !secret_storage::is_protected_secret(secret)))
 }
 
 fn settings_for_storage(settings: &GlobalSettings) -> Result<GlobalSettings, String> {
     let mut settings = settings.clone();
+    if !settings.curseforge_api_key.is_empty() {
+        settings.curseforge_api_key = secret_storage::protect_secret(&settings.curseforge_api_key)?;
+    }
     if !settings.web_acme_tencent_secret_key.is_empty() {
         settings.web_acme_tencent_secret_key =
             secret_storage::protect_secret(&settings.web_acme_tencent_secret_key)?;
@@ -61,6 +60,10 @@ fn settings_for_storage(settings: &GlobalSettings) -> Result<GlobalSettings, Str
 }
 
 pub(super) fn restore_settings_from_storage(settings: &mut GlobalSettings) -> Result<(), String> {
+    if !settings.curseforge_api_key.is_empty() {
+        settings.curseforge_api_key =
+            secret_storage::unprotect_secret(&settings.curseforge_api_key)?;
+    }
     if !settings.web_acme_tencent_secret_key.is_empty() {
         settings.web_acme_tencent_secret_key =
             secret_storage::unprotect_secret(&settings.web_acme_tencent_secret_key)?;

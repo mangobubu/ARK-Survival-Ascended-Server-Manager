@@ -9,6 +9,11 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
         Target::GameIniShooterGameMode,
     ),
     default(
+        "disableFriendlyFirePvP",
+        DefaultValue::Bool(false),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
         "cropGrowthSpeedMultiplier",
         DefaultValue::U32(1),
         Target::GameIniShooterGameMode,
@@ -81,12 +86,12 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
     default(
         "allowAnyoneBabyImprintCuddle",
         DefaultValue::Bool(false),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "platformStructureMultiplier",
         DefaultValue::F64(1.5),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "maxTribeSize",
@@ -101,22 +106,22 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
     default(
         "structurePickupTimeAfterPlacement",
         DefaultValue::U32(30),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "structurePickupHoldDuration",
         DefaultValue::F64(0.5),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "autoDestroyOldStructuresMultiplier",
         DefaultValue::U32(1),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "fastDecayUnsnappedCoreStructures",
         DefaultValue::Bool(false),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "limitGeneratorsNum",
@@ -131,22 +136,22 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
     default(
         "allowCryoFridgeOnSaddle",
         DefaultValue::Bool(false),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "disableCryopodEnemyCheck",
         DefaultValue::Bool(false),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "disableCryopodFridgeRequirement",
         DefaultValue::Bool(false),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "disableCryopodCooldown",
         DefaultValue::Bool(false),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "allowSpeedLeveling",
@@ -156,27 +161,27 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
     default(
         "raidDinoFoodDrainMultiplier",
         DefaultValue::U32(1),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "minimumDinoReuploadInterval",
         DefaultValue::U32(0),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "enableDiseases",
         DefaultValue::Bool(true),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "nonPermanentDiseases",
         DefaultValue::Bool(false),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "tribeNameChangeCooldown",
         DefaultValue::U32(15),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "maxAlliancesPerTribe",
@@ -191,51 +196,151 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
     default(
         "limitBunkersPerTribe",
         DefaultValue::Bool(true),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "limitBunkersPerTribeNum",
         DefaultValue::U32(3),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "allowBunkersInPreventionZones",
         DefaultValue::Bool(false),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "allowRidingDinosInsideBunkers",
         DefaultValue::Bool(true),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "allowBunkerModulesAboveGround",
         DefaultValue::Bool(false),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "allowDinoAIInsideBunkers",
         DefaultValue::Bool(true),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "allowBunkerModulesInPreventionZones",
         DefaultValue::Bool(false),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "minDistanceBetweenBunkers",
         DefaultValue::U32(3000),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "enemyAccessBunkerHPThreshold",
         DefaultValue::F64(0.25),
-        Target::GameIniShooterGameMode,
+        Target::GameUserSettingsServerSettings,
     ),
     default(
         "bunkerUnderHPThresholdDmgMultiplier",
         DefaultValue::F64(0.05),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "allowUnlimitedRespecs",
+        DefaultValue::Bool(false),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "disablePhotoMode",
+        DefaultValue::Bool(false),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "showCreativeMode",
+        DefaultValue::Bool(false),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "useDinoLevelUpAnimations",
+        DefaultValue::Bool(true),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "disableWirelessCrafting",
+        DefaultValue::Bool(false),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "craftingSkillBonusMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "craftXpMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "customRecipeEffectivenessMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "customRecipeSkillMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "genericXpMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "harvestXpMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "killXpMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "specialXpMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "hairGrowthSpeedMultiplier",
+        DefaultValue::F64(0.0),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "maxFallSpeedMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "poopIntervalMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "wildDinoFoodDrainMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "photoModeRangeLimit",
+        DefaultValue::F64(3000.0),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "wirelessCraftingRangeOverride",
+        DefaultValue::F64(3000.0),
+        Target::GameIniShooterGameMode,
+    ),
+    default(
+        "customGameIniSettings",
+        DefaultValue::Text(""),
         Target::GameIniShooterGameMode,
     ),
 ];

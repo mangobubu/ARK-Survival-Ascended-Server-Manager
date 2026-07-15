@@ -672,6 +672,48 @@ button, input, textarea { font: inherit; }
 .mod-item__meta { margin-top: 7px; padding-top: 6px; display: flex; align-items: center; gap: 7px; border-top: 1px solid #0c263a; color: #738b9e; font-size: 10px; }
 .mod-item__actions { margin-left: auto; display: flex; gap: 1px; }
 .mod-item__actions .ant-btn { width: 24px; height: 24px; padding: 0; }
+.curseforge-mod-dialog .ant-modal-body { padding-top: 8px; }
+.curseforge-mod-dialog__title { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.curseforge-mod-dialog__title > .anticon { color: #14b8ff; }
+.curseforge-mod-dialog__title > span:not(.ant-tag) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.curseforge-mod-dialog__body { display: flex; flex-direction: column; gap: 10px; }
+.curseforge-mod-dialog__toolbar { min-height: 28px; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.curseforge-mod-dialog__toolbar .ant-typography { text-align: right; }
+.curseforge-mod-dialog__results { position: relative; min-height: 370px; max-height: min(52vh, 520px); overflow-y: auto; scrollbar-color: #1b526f #061724; scrollbar-width: thin; }
+.curseforge-mod-dialog__results::-webkit-scrollbar { width: 6px; }
+.curseforge-mod-dialog__results::-webkit-scrollbar-thumb { border-radius: 6px; background: #1b526f; }
+.curseforge-mod-dialog__results > .ant-alert { margin-top: 8px; }
+.curseforge-mod-dialog__loading { min-height: 340px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+.curseforge-mod-dialog__loading-overlay { position: sticky; bottom: 8px; z-index: 3; width: 34px; height: 34px; margin: -42px auto 8px; display: grid; place-items: center; border: 1px solid #18506f; border-radius: 6px; background: rgba(3, 20, 33, .94); box-shadow: 0 5px 18px rgba(0, 0, 0, .35); }
+.curseforge-catalog-list { display: flex; flex-direction: column; gap: 6px; }
+.curseforge-catalog-item { min-width: 0; min-height: 70px; padding: 8px 10px; display: grid; grid-template-columns: 20px 52px minmax(0, 1fr) minmax(118px, 160px); align-items: center; gap: 10px; border: 1px solid #133a53; border-radius: 5px; background: rgba(4, 19, 31, .72); transition: border-color .16s ease, background-color .16s ease; }
+.curseforge-catalog-item:hover { border-color: #23658b; background: rgba(7, 30, 48, .86); }
+.curseforge-catalog-item--selected { border-color: #1683b8; background: rgba(5, 57, 82, .48); }
+.curseforge-catalog-item--disabled { opacity: .62; }
+.curseforge-catalog-item__image { flex: 0 0 52px; border: 1px solid #1a465f; border-radius: 5px; color: #6f8fa2; background: #071824; }
+.curseforge-catalog-item__image img { object-fit: cover; }
+.curseforge-catalog-item__content { min-width: 0; }
+.curseforge-catalog-item__heading { min-width: 0; display: flex; align-items: center; gap: 7px; }
+.curseforge-catalog-item__heading strong { min-width: 0; overflow: hidden; color: #e1edf5; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.curseforge-catalog-item__content p { margin: 3px 0 5px; display: -webkit-box; overflow: hidden; color: #8197a8; font-size: 10px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.curseforge-catalog-item__meta { display: flex; flex-wrap: wrap; gap: 3px 10px; color: #5f7f93; font-size: 9px; }
+.curseforge-catalog-item__release { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 3px 5px; text-align: right; }
+.curseforge-catalog-item__release strong { grid-column: 1 / -1; overflow: hidden; color: #9fc3d8; font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.curseforge-catalog-item__release span { color: #6e8999; font-size: 9px; }
+.curseforge-catalog-item__release .ant-btn { width: 24px; height: 24px; padding: 0; justify-self: end; }
+
+@media (max-width: 720px) {
+  .curseforge-mod-dialog { max-width: calc(100vw - 16px); margin: 8px auto; }
+  .curseforge-mod-dialog .ant-modal-content { padding: 14px; }
+  .curseforge-mod-dialog__title .ant-tag { display: none; }
+  .curseforge-mod-dialog__toolbar { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .curseforge-mod-dialog__toolbar .ant-typography { text-align: left; }
+  .curseforge-mod-dialog__results { min-height: 330px; max-height: 52vh; }
+  .curseforge-catalog-item { grid-template-columns: 20px 44px minmax(0, 1fr); gap: 8px; }
+  .curseforge-catalog-item__image { width: 44px !important; height: 44px !important; }
+  .curseforge-catalog-item__release { grid-column: 2 / -1; grid-template-columns: minmax(0, 1fr) auto auto; text-align: left; }
+  .curseforge-catalog-item__release strong { grid-column: auto; }
+}
 .panel-footer-actions { flex: 0 0 auto; padding: 8px 10px; display: flex; flex-direction: column; align-items: stretch; gap: 7px; border-top: 1px solid #0e2c43; background: #041321; }
 .panel-footer-actions__buttons { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.4fr); gap: 7px; }
 .panel-footer-actions__buttons .ant-btn { min-width: 0; padding-inline: 7px; font-size: 11px; }
@@ -1981,6 +2023,33 @@ html.theme-light .settings-web-ban-panel {
   border-color: #c9d9e6;
   background: rgba(255, 255, 255, .82);
 }
+
+html.theme-light .curseforge-catalog-item {
+  border-color: #cbdbe7;
+  background: rgba(255, 255, 255, .86);
+}
+
+html.theme-light .curseforge-catalog-item:hover {
+  border-color: #80b9d8;
+  background: #f5fbff;
+}
+
+html.theme-light .curseforge-catalog-item--selected {
+  border-color: #3c9bca;
+  background: #eaf7fd;
+}
+
+html.theme-light .curseforge-catalog-item__image,
+html.theme-light .curseforge-mod-dialog__loading-overlay {
+  border-color: #c3d8e6;
+  background: #edf6fb;
+}
+
+html.theme-light .curseforge-catalog-item__heading strong { color: #172433; }
+html.theme-light .curseforge-catalog-item__content p,
+html.theme-light .curseforge-catalog-item__meta,
+html.theme-light .curseforge-catalog-item__release span { color: #607688; }
+html.theme-light .curseforge-catalog-item__release strong { color: #35627c; }
 
 html.theme-light .brand__title,
 html.theme-light .surface__title,

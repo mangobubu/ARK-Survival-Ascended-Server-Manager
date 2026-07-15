@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ApartmentOutlined,
   ArrowDownOutlined,
@@ -10,6 +10,7 @@ import {
   FileSearchOutlined,
   FolderOpenOutlined,
   HistoryOutlined,
+  LinkOutlined,
   PlusOutlined,
   ReloadOutlined,
   SafetyCertificateOutlined,
@@ -19,16 +20,19 @@ import {
 } from '@ant-design/icons'
 import {
   Alert,
+  Avatar,
   Button,
   Checkbox,
   Empty,
   Input,
   Modal,
+  Pagination,
   Progress,
   Radio,
   Segmented,
   Select,
   Space,
+  Spin,
   Switch,
   Tabs,
   Tag,
@@ -36,6 +40,7 @@ import {
   Typography,
 } from 'antd'
 import { activeEventOptions } from './data'
+import { searchCurseForgeMods } from './backendApi'
 import { arkStackableItemOptions } from './arkStackableItemOptions'
 import {
   AccordionGroup,
@@ -51,11 +56,31 @@ import {
   getItemStackItemLabel,
   itemStackLanguageText,
 } from './itemStackOverrideEditor'
-import type { GlobalSettings, ModItem, ServerConfig, ServerInstance } from './types'
+import type {
+  CurseForgeModSearchResult,
+  CurseForgeModSummary,
+  GlobalSettings,
+  ModItem,
+  ServerConfig,
+  ServerInstance,
+} from './types'
 
 const { Text, Paragraph } = Typography
 
 type AppLanguage = GlobalSettings['language']
+
+const CURSEFORGE_PAGE_SIZE = 20
+const EMPTY_CURSEFORGE_RESULT: CurseForgeModSearchResult = { items: [], totalCount: 0 }
+
+function formatDownloadCount(value: number) {
+  return new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+}
+
+function formatModDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '未知时间'
+  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
+}
 
 interface ConfigPanelProps {
   instance: ServerInstance
@@ -69,12 +94,21 @@ interface ConfigPanelProps {
   onApply: () => void
   onCheckModUpdates: () => void
   checkingMods?: boolean
+  configOperation?: 'save' | 'apply' | null
+  actionsDisabled?: boolean
 }
 
-export default function ConfigPanel({ instance, config, mods, dirty, language, onConfigChange, onModsChange, onSave, onApply, onCheckModUpdates, checkingMods = false }: ConfigPanelProps) {
+export default function ConfigPanel({ instance, config, mods, dirty, language, onConfigChange, onModsChange, onSave, onApply, onCheckModUpdates, checkingMods = false, configOperation = null, actionsDisabled = false }: ConfigPanelProps) {
   const [modModalOpen, setModModalOpen] = useState(false)
   const [itemStackModalOpen, setItemStackModalOpen] = useState(false)
-  const [modId, setModId] = useState('')
+  const [modSearch, setModSearch] = useState('')
+  const [modSearchPage, setModSearchPage] = useState(1)
+  const [modCatalog, setModCatalog] = useState<CurseForgeModSearchResult>(EMPTY_CURSEFORGE_RESULT)
+  const [modCatalogLoading, setModCatalogLoading] = useState(false)
+  const [modCatalogError, setModCatalogError] = useState('')
+  const [modCatalogReload, setModCatalogReload] = useState(0)
+  const [selectedCatalogMods, setSelectedCatalogMods] = useState<CurseForgeModSummary[]>([])
+  const modRequestSequence = useRef(0)
   const [activeTab, setActiveTab] = useState('basic')
   const [configSearch, setConfigSearch] = useState('')
   const set = onConfigChange
@@ -87,17 +121,95 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
   const privateVisibilityNeedsAccess = config.visibility === 'private' && !hasJoinPassword && !hasExclusiveAccess
   const itemStackOverrides = config.itemStackOverrides ?? []
   const itemStackText = itemStackLanguageText[language]
+  const existingModIds = useMemo(() => new Set(mods.map((mod) => mod.id)), [mods])
+  const selectedCatalogModIds = useMemo(
+    () => new Set(selectedCatalogMods.map((mod) => mod.id)),
+    [selectedCatalogMods],
+  )
+  const selectableCatalogMods = modCatalog.items.filter((mod) => !existingModIds.has(mod.id))
+  const selectedOnCurrentPage = selectableCatalogMods.filter((mod) => selectedCatalogModIds.has(mod.id)).length
+  const allCurrentPageSelected = selectableCatalogMods.length > 0
+    && selectedOnCurrentPage === selectableCatalogMods.length
+
+  useEffect(() => {
+    if (!modModalOpen) return
+    const requestId = ++modRequestSequence.current
+    let cancelled = false
+    setModCatalogLoading(true)
+    setModCatalogError('')
+    const timer = window.setTimeout(() => {
+      void searchCurseForgeMods(
+        modSearch.trim(),
+        (modSearchPage - 1) * CURSEFORGE_PAGE_SIZE,
+        CURSEFORGE_PAGE_SIZE,
+      ).then((result) => {
+        if (cancelled || requestId !== modRequestSequence.current) return
+        setModCatalog(result)
+      }).catch((error) => {
+        if (cancelled || requestId !== modRequestSequence.current) return
+        setModCatalog(EMPTY_CURSEFORGE_RESULT)
+        setModCatalogError(String(error))
+      }).finally(() => {
+        if (!cancelled && requestId === modRequestSequence.current) setModCatalogLoading(false)
+      })
+    }, modSearch.trim() ? 350 : 0)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [modCatalogReload, modModalOpen, modSearch, modSearchPage])
 
   const openItemStackModal = () => {
     setItemStackModalOpen(true)
   }
 
-  const addMod = () => {
-    const id = modId.trim()
-    if (!id || mods.some((mod) => mod.id === id)) return
-    onModsChange([...mods, { id, name: `CurseForge 模组 ${id}`, version: '等待检测', size: '—', enabled: true }])
-    setModId('')
+  const openModModal = () => {
+    setModSearch('')
+    setModSearchPage(1)
+    setModCatalog(EMPTY_CURSEFORGE_RESULT)
+    setModCatalogError('')
+    setSelectedCatalogMods([])
+    setModModalOpen(true)
+  }
+
+  const closeModModal = () => {
+    modRequestSequence.current += 1
     setModModalOpen(false)
+  }
+
+  const toggleCatalogMod = (item: CurseForgeModSummary) => {
+    if (existingModIds.has(item.id)) return
+    setSelectedCatalogMods((current) => current.some((mod) => mod.id === item.id)
+      ? current.filter((mod) => mod.id !== item.id)
+      : [...current, item])
+  }
+
+  const toggleCurrentCatalogPage = () => {
+    const currentPageIds = new Set(selectableCatalogMods.map((mod) => mod.id))
+    if (allCurrentPageSelected) {
+      setSelectedCatalogMods((current) => current.filter((mod) => !currentPageIds.has(mod.id)))
+      return
+    }
+    setSelectedCatalogMods((current) => {
+      const selectedIds = new Set(current.map((mod) => mod.id))
+      return [...current, ...selectableCatalogMods.filter((mod) => !selectedIds.has(mod.id))]
+    })
+  }
+
+  const addSelectedMods = () => {
+    const additions: ModItem[] = selectedCatalogMods
+      .filter((item) => !existingModIds.has(item.id))
+      .map((item) => ({
+        id: item.id,
+        name: item.name,
+        version: item.version,
+        size: item.size,
+        enabled: true,
+      }))
+    if (additions.length === 0) return
+    onModsChange([...mods, ...additions])
+    closeModModal()
   }
 
   const moveMod = (index: number, direction: -1 | 1) => {
@@ -159,13 +271,28 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
         <Field label="采集数量倍率" tip="HarvestAmountMultiplier；写入 GameUserSettings.ini，并同步加入启动参数兜底。ASA 官方 1x 若显示 +2，设置 5x 理论应为 +10。"><NumberField value={config.harvestAmount} min={0.1} max={100} step={0.5} onChange={(v) => set('harvestAmount', v)} addonAfter="x" /></Field>
         <Field label="采集物耐久倍率" tip="HarvestHealthMultiplier；越高可采集的次数越多"><NumberField value={config.harvestHealthMultiplier} min={0.1} max={100} step={0.1} onChange={(v) => set('harvestHealthMultiplier', v)} addonAfter="x" /></Field>
         <Field label="硬核模式"><Switch checked={config.hardcore} onChange={(v) => set('hardcore', v)} /></Field>
-        <Field label="禁用友军伤害"><Switch checked={config.disableFriendlyFire} onChange={(v) => set('disableFriendlyFire', v)} /></Field>
+        <Field label="PvE 禁用友军伤害" tip="bPvEDisableFriendlyFire；仅 PvE 规则使用"><Switch checked={config.disableFriendlyFire} onChange={(v) => set('disableFriendlyFire', v)} /></Field>
+        <Field label="PvP/通用禁用友军伤害" tip="bDisableFriendlyFire；用于 PvP 或通用友军伤害规则"><Switch checked={config.disableFriendlyFirePvP} onChange={(v) => set('disableFriendlyFirePvP', v)} /></Field>
         <Field label="允许 PvP Gamma"><Switch checked={config.enablePvPGamma} onChange={(v) => set('enablePvPGamma', v)} /></Field>
         <Field label="显示命中标记"><Switch checked={config.allowHitMarkers} onChange={(v) => set('allowHitMarkers', v)} /></Field>
         <Field label="允许第三人称"><Switch checked={config.thirdPerson} onChange={(v) => set('thirdPerson', v)} /></Field>
         <Field label="显示准星"><Switch checked={config.crosshair} onChange={(v) => set('crosshair', v)} /></Field>
         <Field label="地图显示玩家位置"><Switch checked={config.showMapPlayer} onChange={(v) => set('showMapPlayer', v)} /></Field>
         <Field label="PvE 飞行生物叼取"><Switch checked={config.flyerCarry} onChange={(v) => set('flyerCarry', v)} /></Field>
+      </SectionCard>
+
+      <SectionCard title="聊天与玩家体验" icon={<SafetyCertificateOutlined />} note="ServerSettings / Game.ini">
+        <Field label="全局语音" tip="GlobalVoiceChat；开启后语音不受距离限制"><Switch checked={config.globalVoiceChat} onChange={(v) => set('globalVoiceChat', v)} /></Field>
+        <Field label="附近文字聊天" tip="ProximityChat；开启后文字聊天按附近距离传播"><Switch checked={config.proximityChat} onChange={(v) => set('proximityChat', v)} /></Field>
+        <Field label="显示玩家加入通知" tip="反向写入 DontAlwaysNotifyPlayerJoined；开启本项会写入 DontAlwaysNotifyPlayerJoined=False"><Switch checked={config.showPlayerJoinNotifications} onChange={(v) => set('showPlayerJoinNotifications', v)} /></Field>
+        <Field label="显示浮动伤害数字" tip="ShowFloatingDamageText"><Switch checked={config.showFloatingDamageText} onChange={(v) => set('showFloatingDamageText', v)} /></Field>
+        <Field label="强制隐藏 HUD" tip="ServerForceNoHUD；开启后服务端强制玩家隐藏 HUD"><Switch checked={config.serverForceNoHud} onChange={(v) => set('serverForceNoHud', v)} /></Field>
+        <Field label="战斗日志隐藏伤害来源" tip="AllowHideDamageSourceFromLogs"><Switch checked={config.allowHideDamageSourceFromLogs} onChange={(v) => set('allowHideDamageSourceFromLogs', v)} /></Field>
+        <Field label="阻止出生动画" tip="PreventSpawnAnimations"><Switch checked={config.preventSpawnAnimations} onChange={(v) => set('preventSpawnAnimations', v)} /></Field>
+        <Field label="禁用拍照模式" tip="bDisablePhotoMode"><Switch checked={config.disablePhotoMode} onChange={(v) => set('disablePhotoMode', v)} /></Field>
+        <Field label="拍照模式范围上限" tip="PhotoModeRangeLimit；禁用拍照模式时此值不生效">
+          <NumberField disabled={config.disablePhotoMode} value={config.photoModeRangeLimit} min={0} max={100000} step={100} onChange={(v) => set('photoModeRangeLimit', v)} />
+        </Field>
       </SectionCard>
 
       <SectionCard title="伤害、抗性与生存消耗" icon={<SafetyCertificateOutlined />} note="GameUserSettings.ini">
@@ -180,6 +307,9 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
         <Field label="玩家耐力消耗"><NumberField value={config.playerStaminaDrainMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('playerStaminaDrainMultiplier', v)} addonAfter="x" /></Field>
         <Field label="生物食物消耗"><NumberField value={config.dinoFoodDrainMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('dinoFoodDrainMultiplier', v)} addonAfter="x" /></Field>
         <Field label="生物耐力消耗"><NumberField value={config.dinoStaminaDrainMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('dinoStaminaDrainMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="玩家生命恢复" tip="PlayerCharacterHealthRecoveryMultiplier"><NumberField value={config.playerHealthRecoveryMultiplier} min={0} max={100} step={0.1} onChange={(v) => set('playerHealthRecoveryMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="生物生命恢复" tip="DinoCharacterHealthRecoveryMultiplier"><NumberField value={config.dinoHealthRecoveryMultiplier} min={0} max={100} step={0.1} onChange={(v) => set('dinoHealthRecoveryMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="氧气游泳速度属性倍率" tip="OxygenSwimSpeedStatMultiplier"><NumberField value={config.oxygenSwimSpeedStatMultiplier} min={0} max={100} step={0.1} onChange={(v) => set('oxygenSwimSpeedStatMultiplier', v)} addonAfter="x" /></Field>
       </SectionCard>
 
       <SectionCard title="资源、物品与战利品" icon={<CloudSyncOutlined />} note="常用倍率">
@@ -190,6 +320,9 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
         <Field label="补给箱品质"><NumberField value={config.supplyCrateLootQualityMultiplier} min={0.1} max={5} step={0.1} onChange={(v) => set('supplyCrateLootQualityMultiplier', v)} addonAfter="x" /></Field>
         <Field label="钓鱼战利品品质"><NumberField value={config.fishingLootQualityMultiplier} min={0.1} max={5} step={0.1} onChange={(v) => set('fishingLootQualityMultiplier', v)} addonAfter="x" /></Field>
         <Field label="燃料消耗间隔" tip="越高燃料使用越慢"><NumberField value={config.fuelConsumptionIntervalMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('fuelConsumptionIntervalMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="钳制物品腐坏时间" tip="ClampItemSpoilingTimes"><Switch checked={config.clampItemSpoilingTimes} onChange={(v) => set('clampItemSpoilingTimes', v)} /></Field>
+        <Field label="钳制资源采集伤害" tip="ClampResourceHarvestDamage"><Switch checked={config.clampResourceHarvestDamage} onChange={(v) => set('clampResourceHarvestDamage', v)} /></Field>
+        <Field label="随机补给箱落点" tip="RandomSupplyCratePoints"><Switch checked={config.randomSupplyCratePoints} onChange={(v) => set('randomSupplyCratePoints', v)} /></Field>
         <Field label="物品叠加/堆叠倍率" tip="ItemStackSizeMultiplier；全局物品堆叠倍率，1 表示默认叠加数量"><NumberField value={config.itemStackSizeMultiplier} min={0.1} max={1000} step={0.5} onChange={(v) => set('itemStackSizeMultiplier', v)} addonAfter="x" /></Field>
         <Field label="食物腐坏时间"><NumberField value={config.globalSpoilingTimeMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('globalSpoilingTimeMultiplier', v)} addonAfter="x" /></Field>
         <Field label="掉落物分解时间"><NumberField value={config.globalItemDecompositionTimeMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('globalItemDecompositionTimeMultiplier', v)} addonAfter="x" /></Field>
@@ -284,6 +417,25 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
           </Space>
         </Field>
         <Field label="任何人可照料幼崽"><Switch checked={config.allowAnyoneBabyImprintCuddle} onChange={(v) => set('allowAnyoneBabyImprintCuddle', v)} /></Field>
+        <Field label="禁用留痕属性加成" tip="DisableImprintDinoBuff；开启后即使完成留痕，也不应用留痕骑乘属性加成"><Switch checked={config.disableImprintDinoBuff} onChange={(v) => set('disableImprintDinoBuff', v)} /></Field>
+        <Field label="阻止配偶加成" tip="PreventMateBoost"><Switch checked={config.preventMateBoost} onChange={(v) => set('preventMateBoost', v)} /></Field>
+        <Field label="排泄间隔" tip="PoopIntervalMultiplier；数值越小排泄越频繁"><NumberField value={config.poopIntervalMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('poopIntervalMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="野生生物食物消耗" tip="WildDinoCharacterFoodDrainMultiplier"><NumberField value={config.wildDinoFoodDrainMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('wildDinoFoodDrainMultiplier', v)} addonAfter="x" /></Field>
+      </SectionCard>
+
+      <SectionCard title="经验与制作" icon={<SettingOutlined />} note="Game.ini">
+        <Field label="通用经验倍率" tip="GenericXPMultiplier"><NumberField value={config.genericXpMultiplier} min={0} max={1000} step={0.1} onChange={(v) => set('genericXpMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="采集经验倍率" tip="HarvestXPMultiplier"><NumberField value={config.harvestXpMultiplier} min={0} max={1000} step={0.1} onChange={(v) => set('harvestXpMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="击杀经验倍率" tip="KillXPMultiplier"><NumberField value={config.killXpMultiplier} min={0} max={1000} step={0.1} onChange={(v) => set('killXpMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="特殊经验倍率" tip="SpecialXPMultiplier"><NumberField value={config.specialXpMultiplier} min={0} max={1000} step={0.1} onChange={(v) => set('specialXpMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="制作经验倍率" tip="CraftXPMultiplier"><NumberField value={config.craftXpMultiplier} min={0} max={1000} step={0.1} onChange={(v) => set('craftXpMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="制作技能加成倍率" tip="CraftingSkillBonusMultiplier"><NumberField value={config.craftingSkillBonusMultiplier} min={0} max={1000} step={0.1} onChange={(v) => set('craftingSkillBonusMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="自定义食谱效果倍率" tip="CustomRecipeEffectivenessMultiplier"><NumberField value={config.customRecipeEffectivenessMultiplier} min={0} max={1000} step={0.1} onChange={(v) => set('customRecipeEffectivenessMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="自定义食谱技能倍率" tip="CustomRecipeSkillMultiplier"><NumberField value={config.customRecipeSkillMultiplier} min={0} max={1000} step={0.1} onChange={(v) => set('customRecipeSkillMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="允许无限洗点" tip="bAllowUnlimitedRespecs"><Switch checked={config.allowUnlimitedRespecs} onChange={(v) => set('allowUnlimitedRespecs', v)} /></Field>
+        <Field label="显示创造模式" tip="bShowCreativeMode"><Switch checked={config.showCreativeMode} onChange={(v) => set('showCreativeMode', v)} /></Field>
+        <Field label="头发生长速度" tip="HairGrowthSpeedMultiplier"><NumberField value={config.hairGrowthSpeedMultiplier} min={0} max={100} step={0.1} onChange={(v) => set('hairGrowthSpeedMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="最大坠落速度倍率" tip="MaxFallSpeedMultiplier"><NumberField value={config.maxFallSpeedMultiplier} min={0} max={100} step={0.1} onChange={(v) => set('maxFallSpeedMultiplier', v)} addonAfter="x" /></Field>
       </SectionCard>
 
       <SectionCard title="建筑、部落与衰减" icon={<ApartmentOutlined />} note="Game.ini / ServerSettings">
@@ -291,6 +443,8 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
           <Field label="范围内建筑上限"><NumberField value={config.structureLimit} min={100} max={100000} step={100} onChange={(v) => set('structureLimit', v)} /></Field>
           <Field label="平台建筑倍率"><NumberField value={config.platformStructureMultiplier} min={0.1} max={10} step={0.1} onChange={(v) => set('platformStructureMultiplier', v)} addonAfter="x" /></Field>
         </div>
+        <Field label="平台鞍建造区域边界" tip="PlatformSaddleBuildAreaBoundsMultiplier"><NumberField value={config.platformSaddleBuildAreaBoundsMultiplier} min={0.1} max={100} step={0.1} onChange={(v) => set('platformSaddleBuildAreaBoundsMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="建筑承伤倍率" tip="StructureResistanceMultiplier；数值越高建筑受到的伤害越高，0.5 表示承受一半伤害"><NumberField value={config.structureResistanceMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('structureResistanceMultiplier', v)} addonAfter="x" /></Field>
         <Field label="禁用建筑碰撞检测"><Switch checked={config.disablePlacementCollision} onChange={(v) => set('disablePlacementCollision', v)} /></Field>
         <Field label="PvE 允许在补给箱附近建筑" tip="仅在 PvE 模式生效；允许玩家在补给箱投放点附近放置建筑">
           <Switch checked={config.pveAllowStructuresAtSupplyDrops} onChange={(v) => set('pveAllowStructuresAtSupplyDrops', v)} />
@@ -300,7 +454,6 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
         </Field>
         <Field label="最大部落人数"><NumberField value={config.maxTribeSize} min={0} max={500} onChange={(v) => set('maxTribeSize', v)} /></Field>
         <Field label="允许部落联盟"><Switch checked={config.tribeAlliances} onChange={(v) => set('tribeAlliances', v)} /></Field>
-        <Field label="启用 PvE 建筑衰减"><Switch checked={config.pveStructureDecay} onChange={(v) => set('pveStructureDecay', v)} /></Field>
         <Field label="PvE 洞穴建造"><Switch checked={config.allowCaveBuildingPvE} onChange={(v) => set('allowCaveBuildingPvE', v)} /></Field>
         <Field label="PvP 洞穴建造"><Switch checked={config.allowCaveBuildingPvP} onChange={(v) => set('allowCaveBuildingPvP', v)} /></Field>
         <Field label="建筑维修冷却"><NumberField value={config.structureDamageRepairCooldown} min={0} max={86400} onChange={(v) => set('structureDamageRepairCooldown', v)} addonAfter="秒" /></Field>
@@ -315,6 +468,10 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
         <Field label="孤立建筑快速衰减"><Switch checked={config.fastDecayUnsnappedCoreStructures} onChange={(v) => set('fastDecayUnsnappedCoreStructures', v)} /></Field>
         <Field label="区域发电机上限"><NumberField value={config.limitGeneratorsNum} min={0} max={1000} onChange={(v) => set('limitGeneratorsNum', v)} /></Field>
         <Field label="发电机限制范围"><NumberField value={config.limitGeneratorsRange} min={0} max={1000000} step={100} onChange={(v) => set('limitGeneratorsRange', v)} /></Field>
+        <Field label="允许附着多个 C4" tip="AllowMultipleAttachedC4"><Switch checked={config.allowMultipleAttachedC4} onChange={(v) => set('allowMultipleAttachedC4', v)} /></Field>
+        <Field label="强制锁定所有建筑" tip="ForceAllStructureLocking"><Switch checked={config.forceAllStructureLocking} onChange={(v) => set('forceAllStructureLocking', v)} /></Field>
+        <Field label="禁用无线制作" tip="bDisableWirelessCrafting"><Switch checked={config.disableWirelessCrafting} onChange={(v) => set('disableWirelessCrafting', v)} /></Field>
+        <Field label="无线制作范围覆盖" tip="WirelessCraftingRangeOverride；禁用无线制作时此值不生效"><NumberField disabled={config.disableWirelessCrafting} value={config.wirelessCraftingRangeOverride} min={0} max={100000} step={100} onChange={(v) => set('wirelessCraftingRangeOverride', v)} /></Field>
         <Field label="平台鞍允许低温冰箱"><Switch checked={config.allowCryoFridgeOnSaddle} onChange={(v) => set('allowCryoFridgeOnSaddle', v)} /></Field>
         <Field label="关闭冷冻舱敌人检测"><Switch checked={config.disableCryopodEnemyCheck} onChange={(v) => set('disableCryopodEnemyCheck', v)} /></Field>
         <Field label="取消低温冰箱要求"><Switch checked={config.disableCryopodFridgeRequirement} onChange={(v) => set('disableCryopodFridgeRequirement', v)} /></Field>
@@ -331,6 +488,12 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
         <Field label="强制允许洞穴飞行"><Switch checked={config.forceAllowCaveFlyers} onChange={(v) => set('forceAllowCaveFlyers', v)} /></Field>
         <Field label="骑乘飞行生物恢复耐力"><Switch checked={config.allowFlyingStaminaRecovery} onChange={(v) => set('allowFlyingStaminaRecovery', v)} /></Field>
         <Field label="突袭生物食物消耗"><NumberField value={config.raidDinoFoodDrainMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('raidDinoFoodDrainMultiplier', v)} addonAfter="x" /></Field>
+        <Field label="允许喂养突袭生物" tip="AllowRaidDinoFeeding"><Switch checked={config.allowRaidDinoFeeding} onChange={(v) => set('allowRaidDinoFeeding', v)} /></Field>
+        <Field label="个人驯养数量上限" tip="MaxPersonalTamedDinos；0 表示不设置个人上限"><NumberField value={config.maxPersonalTamedDinos} min={0} max={100000} step={100} onChange={(v) => set('maxPersonalTamedDinos', v)} /></Field>
+        <Field label="驯养生物软上限" tip="MaxTamedDinos_SoftTameLimit"><NumberField value={config.maxTamedDinosSoftTameLimit} min={0} max={100000} step={100} onChange={(v) => set('maxTamedDinosSoftTameLimit', v)} /></Field>
+        <Field label="软上限删除倒计时" tip="MaxTamedDinos_SoftTameLimit_CountdownForDeletionDuration；单位秒"><NumberField value={config.maxTamedDinosSoftTameLimitCountdown} min={0} max={31536000} step={3600} onChange={(v) => set('maxTamedDinosSoftTameLimitCountdown', v)} addonAfter="秒" /></Field>
+        <Field label="超软上限销毁驯养生物" tip="DestroyTamesOverTheSoftTameLimit；危险：达到软上限后会按倒计时删除驯养生物"><Switch checked={config.destroyTamesOverSoftTameLimit} onChange={(v) => set('destroyTamesOverSoftTameLimit', v)} /></Field>
+        <Field label="生物升级动画" tip="bUseDinoLevelUpAnimations"><Switch checked={config.useDinoLevelUpAnimations} onChange={(v) => set('useDinoLevelUpAnimations', v)} /></Field>
       </SectionCard>
 
       <SectionCard title="玩家、疾病与部落" icon={<SafetyCertificateOutlined />} note="服务器规则">
@@ -341,6 +504,19 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
         <Field label="部落改名冷却"><NumberField value={config.tribeNameChangeCooldown} min={0} max={365} onChange={(v) => set('tribeNameChangeCooldown', v)} addonAfter="天" /></Field>
         <Field label="每部落联盟上限" tip="0 表示不限制"><NumberField value={config.maxAlliancesPerTribe} min={0} max={1000} onChange={(v) => set('maxAlliancesPerTribe', v)} /></Field>
         <Field label="每联盟部落上限" tip="0 表示不限制"><NumberField value={config.maxTribesPerAlliance} min={0} max={1000} onChange={(v) => set('maxTribesPerAlliance', v)} /></Field>
+      </SectionCard>
+
+      <SectionCard title="离线保护与衰减" icon={<HistoryOutlined />} note="ServerSettings">
+        <Field label="启用离线突袭保护" tip="PreventOfflinePvP"><Switch checked={config.preventOfflinePvP} onChange={(v) => set('preventOfflinePvP', v)} /></Field>
+        <Field label="离线保护生效延迟" tip="PreventOfflinePvPInterval；部落最后一名玩家离线后等待的秒数">
+          <NumberField disabled={!config.preventOfflinePvP} value={config.preventOfflinePvPInterval} min={0} max={86400} step={60} onChange={(v) => set('preventOfflinePvPInterval', v)} addonAfter="秒" />
+        </Field>
+        <Field label="启用 PvE 建筑衰减" tip="反向写入 DisableStructureDecayPvE；开启本项会写入 DisableStructureDecayPvE=False"><Switch checked={config.pveStructureDecay} onChange={(v) => set('pveStructureDecay', v)} /></Field>
+        <Field label="启用 PvE 驯养生物衰减" tip="反向写入 DisableDinoDecayPvE；开启本项会写入 DisableDinoDecayPvE=False"><Switch checked={config.pveDinoDecay} onChange={(v) => set('pveDinoDecay', v)} /></Field>
+        <Field label="PvE 生物衰减周期" tip="PvEDinoDecayPeriodMultiplier；启用 PvE 驯养生物衰减时生效">
+          <NumberField disabled={!config.pveDinoDecay} value={config.pveDinoDecayPeriodMultiplier} min={0.01} max={100} step={0.1} onChange={(v) => set('pveDinoDecayPeriodMultiplier', v)} addonAfter="x" />
+        </Field>
+        <Field label="启用 PvP 驯养生物衰减" tip="PvPDinoDecay"><Switch checked={config.pvpDinoDecay} onChange={(v) => set('pvpDinoDecay', v)} /></Field>
       </SectionCard>
 
       <SectionCard title="准入与跨服传输" icon={<SafetyCertificateOutlined />} note="集群安全">
@@ -361,6 +537,8 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
         <Field label="角色上传过期"><NumberField value={config.tributeCharacterExpirationSeconds} min={0} max={31536000} step={3600} onChange={(v) => set('tributeCharacterExpirationSeconds', v)} addonAfter="秒" /></Field>
         <Field label="生物上传过期"><NumberField value={config.tributeDinoExpirationSeconds} min={0} max={31536000} step={3600} onChange={(v) => set('tributeDinoExpirationSeconds', v)} addonAfter="秒" /></Field>
         <Field label="物品上传过期"><NumberField value={config.tributeItemExpirationSeconds} min={0} max={31536000} step={3600} onChange={(v) => set('tributeItemExpirationSeconds', v)} addonAfter="秒" /></Field>
+        <Field label="贡品生物数量上限" tip="MaxTributeDinos；低于官方默认值 20 会被服务端回退，高于社区验证上限 273 可能损坏集群数据"><NumberField value={config.maxTributeDinos} min={20} max={273} onChange={(v) => set('maxTributeDinos', v)} /></Field>
+        <Field label="贡品物品数量上限" tip="MaxTributeItems；低于官方默认值 50 会被服务端回退，高于社区验证上限 154 可能损坏集群数据"><NumberField value={config.maxTributeItems} min={50} max={154} onChange={(v) => set('maxTributeItems', v)} /></Field>
         <Field label="集群共享目录" wide><Input value={config.clusterDirOverride} onChange={(e) => set('clusterDirOverride', e.target.value)} /></Field>
         <Field label="禁用非集群传输路径"><Switch checked={config.noTransferFromFiltering} onChange={(v) => set('noTransferFromFiltering', v)} /></Field>
         <Alert type="warning" showIcon title="跨服集群应统一 Cluster ID，并显式设置上传/下载规则。" />
@@ -395,6 +573,12 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
     `-WinLiveMaxPlayers=${config.maxPlayers}`,
     config.useAllCores && '-USEALLAVAILABLECORES',
     config.noBattlEye && '-NoBattlEye',
+    config.noDinos && '-NoDinos',
+    config.noWildBabies && '-NoWildBabies',
+    config.disableCustomCosmetics && '-DisableCustomCosmetics',
+    config.unstasisDinoObstructionCheck && '-UnstasisDinoObstructionCheck',
+    config.useServerNetSpeedCheck && '-UseServerNetSpeedCheck',
+    config.noSound && '-nosound',
     config.allowFlyerSpeedLeveling && '-AllowFlyerSpeedLeveling',
     config.forceAllowCaveFlyers && '-ForceAllowCaveFlyers',
     config.enableIdlePlayerKick && '-EnableIdlePlayerKick',
@@ -411,6 +595,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
     config.useDynamicConfig && '-UseDynamicConfig',
     config.useDynamicConfig && config.customDynamicConfigUrl && `-CustomDynamicConfigUrl="${config.customDynamicConfigUrl}"`,
     config.serverGameLog && '-servergamelog',
+    config.serverGameLogIncludeTribe && '-servergamelogincludetribelogs',
     config.serverGameLogIncludeTribe && '-ServerRCONOutputTribeLogs',
     config.destroyWildDinos && '-ForceRespawnDinos',
     (config.whitelist || config.exclusiveJoin) && '-exclusivejoin',
@@ -464,6 +649,15 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
         {config.useDynamicConfig && <Field label="动态配置 URL" wide><Input value={config.customDynamicConfigUrl} onChange={(e) => set('customDynamicConfigUrl', e.target.value)} placeholder="https://example.com/dynamicconfig.ini" /></Field>}
       </SectionCard>
 
+      <SectionCard title="服务端启动行为" icon={<ThunderboltOutlined />} note="ASA 启动参数">
+        <Field label="禁用全部生物" tip="-NoDinos；危险：启用后世界不会生成任何恐龙"><Switch checked={config.noDinos} onChange={(v) => set('noDinos', v)} /></Field>
+        <Field label="禁用野生幼崽" tip="-NoWildBabies"><Switch checked={config.noWildBabies} onChange={(v) => set('noWildBabies', v)} /></Field>
+        <Field label="禁用自定义装饰" tip="-DisableCustomCosmetics"><Switch checked={config.disableCustomCosmetics} onChange={(v) => set('disableCustomCosmetics', v)} /></Field>
+        <Field label="解除停滞时检查生物阻挡" tip="-UnstasisDinoObstructionCheck"><Switch checked={config.unstasisDinoObstructionCheck} onChange={(v) => set('unstasisDinoObstructionCheck', v)} /></Field>
+        <Field label="启用服务端网速检查" tip="-UseServerNetSpeedCheck"><Switch checked={config.useServerNetSpeedCheck} onChange={(v) => set('useServerNetSpeedCheck', v)} /></Field>
+        <Field label="禁用服务端声音" tip="-nosound"><Switch checked={config.noSound} onChange={(v) => set('noSound', v)} /></Field>
+      </SectionCard>
+
       <SectionCard title="启动参数预览" icon={<CodeOutlined />} note="实时生成">
         <Field label="额外启动参数" wide><Input.TextArea rows={3} value={config.customLaunchArgs} onChange={(e) => set('customLaunchArgs', e.target.value)} /></Field>
         <div className="code-preview">
@@ -473,6 +667,18 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
         </div>
         <Alert type="warning" showIcon title="性能参数没有通用最优值。禁用冬眠等选项可能显著提高资源占用。" />
       </SectionCard>
+
+      <SectionCard title="高级自定义 INI" icon={<CodeOutlined />} note="保留未结构化配置">
+        <Field label="ServerSettings 自定义项" tip="写入 GameUserSettings.ini 的 [ServerSettings]；每行只填 Key=Value，不要填写 section。与表单托管键冲突时以表单设置为准。" wide>
+          <Input.TextArea rows={4} value={config.customServerSettings} onChange={(e) => set('customServerSettings', e.target.value)} placeholder={'Key=Value\nAnotherKey=Value'} />
+        </Field>
+        <Field label="ShooterGameMode 自定义项" tip="写入 Game.ini 的 [/Script/ShooterGame.ShooterGameMode]；每行只填 Key=Value，不要填写 section。与表单托管键冲突时以表单设置为准。" wide>
+          <Input.TextArea rows={4} value={config.customGameIniSettings} onChange={(e) => set('customGameIniSettings', e.target.value)} placeholder={'Key=Value\nAnotherKey=Value'} />
+        </Field>
+        <Field label="IpNetDriver 自定义项" tip="写入 Engine.ini 的 [/Script/OnlineSubsystemUtils.IpNetDriver]；每行只填 Key=Value，不要填写 section。与表单托管键冲突时以表单设置为准。" wide>
+          <Input.TextArea rows={4} value={config.customEngineIniSettings} onChange={(e) => set('customEngineIniSettings', e.target.value)} placeholder={'Key=Value\nAnotherKey=Value'} />
+        </Field>
+      </SectionCard>
     </AccordionGroup>
   )
 
@@ -481,7 +687,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
       <SectionCard title="MOD 加载列表" icon={<BugOutlined />} note={`已启用 ${mods.filter((m) => m.enabled).length} / ${mods.length}`}>
         <div className="mod-toolbar">
           <div className="mod-toolbar__actions">
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setModModalOpen(true)}>添加 MOD</Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openModModal}>添加 MOD</Button>
             <Button loading={checkingMods} icon={<ReloadOutlined />} onClick={onCheckModUpdates}>检查更新</Button>
           </div>
           <Text type="secondary">按列表顺序加载，靠上的 MOD 优先加载</Text>
@@ -529,7 +735,6 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
         <Field label="输出部落日志到 RCON"><Switch checked={config.serverGameLogIncludeTribe} onChange={(v) => set('serverGameLogIncludeTribe', v)} /></Field>
         <Field label="管理员命令审计"><Switch checked={config.adminLogging} onChange={(v) => set('adminLogging', v)} /></Field>
         <Field label="聊天记录"><Switch checked={config.chatLogging} onChange={(v) => set('chatLogging', v)} /></Field>
-        <Field label="时间戳"><Switch checked={config.logTimestamp} onChange={(v) => set('logTimestamp', v)} /></Field>
       </SectionCard>
       <SectionCard title="轮转与保留" icon={<HistoryOutlined />} note="管理器级设置">
         <Field label="日志详细级别"><Select value={config.logLevel} onChange={(v) => set('logLevel', v)} options={[{ label: '普通', value: 'normal' }, { label: '详细', value: 'verbose' }, { label: '调试', value: 'debug' }]} /></Field>
@@ -596,8 +801,8 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
       <Tabs activeKey={activeTabKey} onChange={setActiveTab} items={tabsWithSearchState} />
       <div className="panel-footer-actions">
         <div className="panel-footer-actions__buttons">
-          <Button onClick={onSave}>仅保存配置</Button>
-          <Button type="primary" icon={<ReloadOutlined />} onClick={onApply}>保存并应用重启</Button>
+          <Button loading={configOperation === 'save'} disabled={actionsDisabled} onClick={onSave}>仅保存配置</Button>
+          <Button type="primary" icon={<ReloadOutlined />} loading={configOperation === 'apply'} disabled={actionsDisabled} onClick={onApply}>保存并应用重启</Button>
         </div>
       </div>
 
@@ -608,9 +813,147 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
         onChange={(next) => set('itemStackOverrides', next)}
         onClose={() => setItemStackModalOpen(false)}
       />
-      <Modal title="添加 CurseForge MOD" open={modModalOpen} onCancel={() => setModModalOpen(false)} onOk={addMod} okText="添加到列表" cancelText="取消">
-        <Paragraph type="secondary">输入 ASA CurseForge 项目 ID。原型会将其加入 ActiveMods 队列，正式接入后可从 CurseForge API 获取名称、版本与文件大小。</Paragraph>
-        <Input autoFocus value={modId} onChange={(e) => setModId(e.target.value.replace(/\D/g, ''))} onPressEnter={addMod} placeholder="例如：928708" prefix={<BugOutlined />} />
+      <Modal
+        className="curseforge-mod-dialog"
+        centered
+        destroyOnHidden
+        open={modModalOpen}
+        title={(
+          <div className="curseforge-mod-dialog__title">
+            <BugOutlined />
+            <span>添加 CurseForge MOD</span>
+            <Tag color="blue">ARK: Survival Ascended</Tag>
+          </div>
+        )}
+        width={860}
+        onCancel={closeModModal}
+        footer={[
+          <Button key="cancel" onClick={closeModModal}>取消</Button>,
+          <Button
+            key="add"
+            type="primary"
+            icon={<PlusOutlined />}
+            disabled={selectedCatalogMods.length === 0}
+            onClick={addSelectedMods}
+          >
+            添加 {selectedCatalogMods.length > 0 ? `${selectedCatalogMods.length} 个 MOD` : '所选 MOD'}
+          </Button>,
+        ]}
+      >
+        <div className="curseforge-mod-dialog__body">
+          <Input
+            allowClear
+            autoFocus
+            aria-label="搜索 CurseForge MOD"
+            size="large"
+            prefix={<SearchOutlined />}
+            placeholder="搜索 MOD 名称或关键词"
+            value={modSearch}
+            onChange={(event) => {
+              setModSearch(event.target.value)
+              setModSearchPage(1)
+            }}
+          />
+
+          <div className="curseforge-mod-dialog__toolbar">
+            <Checkbox
+              checked={allCurrentPageSelected}
+              disabled={selectableCatalogMods.length === 0}
+              indeterminate={selectedOnCurrentPage > 0 && !allCurrentPageSelected}
+              onChange={toggleCurrentCatalogPage}
+            >
+              选择当前页
+            </Checkbox>
+            <Text type="secondary">
+              已选 {selectedCatalogMods.length} 个 · 共 {modCatalog.totalCount.toLocaleString('zh-CN')} 个结果
+            </Text>
+          </div>
+
+          <div className="curseforge-mod-dialog__results" aria-busy={modCatalogLoading}>
+            {modCatalogError ? (
+              <Alert
+                showIcon
+                type="error"
+                message="无法加载 CurseForge 官方 MOD"
+                description={modCatalogError}
+                action={<Button size="small" onClick={() => setModCatalogReload((value) => value + 1)}>重试</Button>}
+              />
+            ) : modCatalogLoading && modCatalog.items.length === 0 ? (
+              <div className="curseforge-mod-dialog__loading"><Spin /><Text type="secondary">正在获取官方 MOD 数据</Text></div>
+            ) : modCatalog.items.length === 0 ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={modSearch.trim() ? '没有找到匹配的 MOD' : '官方目录暂无可用 MOD'} />
+            ) : (
+              <div className="curseforge-catalog-list" role="list">
+                {modCatalog.items.map((item) => {
+                  const alreadyAdded = existingModIds.has(item.id)
+                  const selected = selectedCatalogModIds.has(item.id)
+                  return (
+                    <div
+                      className={`curseforge-catalog-item${selected ? ' curseforge-catalog-item--selected' : ''}${alreadyAdded ? ' curseforge-catalog-item--disabled' : ''}`}
+                      key={item.id}
+                      role="listitem"
+                    >
+                      <Checkbox
+                        aria-label={`选择 ${item.name}`}
+                        checked={alreadyAdded || selected}
+                        disabled={alreadyAdded}
+                        onChange={() => toggleCatalogMod(item)}
+                      />
+                      <Avatar
+                        className="curseforge-catalog-item__image"
+                        shape="square"
+                        size={52}
+                        src={item.thumbnailUrl ?? undefined}
+                        icon={<BugOutlined />}
+                      />
+                      <div className="curseforge-catalog-item__content">
+                        <div className="curseforge-catalog-item__heading">
+                          <strong title={item.name}>{item.name}</strong>
+                          {alreadyAdded && <Tag>已添加</Tag>}
+                        </div>
+                        <p title={item.summary}>{item.summary || '暂无简介'}</p>
+                        <div className="curseforge-catalog-item__meta">
+                          <span>{item.author}</span>
+                          <span>ID {item.id}</span>
+                          <span>{formatDownloadCount(item.downloadCount)} 次下载</span>
+                          <span>更新于 {formatModDate(item.dateModified)}</span>
+                        </div>
+                      </div>
+                      <div className="curseforge-catalog-item__release">
+                        <strong title={item.version}>{item.version}</strong>
+                        <span>{item.size}</span>
+                        <Tooltip title="在 CurseForge 查看">
+                          <Button
+                            aria-label={`在 CurseForge 查看 ${item.name}`}
+                            type="text"
+                            size="small"
+                            icon={<LinkOutlined />}
+                            href={item.websiteUrl}
+                            target="_blank"
+                          />
+                        </Tooltip>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            {modCatalogLoading && modCatalog.items.length > 0 && (
+              <div className="curseforge-mod-dialog__loading-overlay"><Spin size="small" /></div>
+            )}
+          </div>
+
+          {modCatalog.totalCount > CURSEFORGE_PAGE_SIZE && !modCatalogError && (
+            <Pagination
+              align="center"
+              current={modSearchPage}
+              pageSize={CURSEFORGE_PAGE_SIZE}
+              showSizeChanger={false}
+              total={Math.min(modCatalog.totalCount, 10_000)}
+              onChange={setModSearchPage}
+            />
+          )}
+        </div>
       </Modal>
     </div>
   )

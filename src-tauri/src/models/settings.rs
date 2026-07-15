@@ -83,6 +83,8 @@ pub struct GlobalSettings {
     pub auto_restart_on_crash: bool,
     pub max_backup_retention: u32,
     #[serde(default)]
+    pub curseforge_api_key: String,
+    #[serde(default)]
     pub web_management_enabled: bool,
     #[serde(default = "default_web_server_port")]
     pub web_server_port: u16,
@@ -215,6 +217,7 @@ impl Default for GlobalSettings {
             auto_update_on_start: true,
             auto_restart_on_crash: true,
             max_backup_retention: 7,
+            curseforge_api_key: String::new(),
             web_management_enabled: false,
             web_server_port: 18080,
             web_admin_username: default_web_admin_username(),

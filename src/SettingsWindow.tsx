@@ -67,6 +67,9 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps = {}) {
   const tencentSecretKeyPlaceholder = settings.webAcmeTencentSecretKeyConfigured
     ? '留空则保留当前腾讯云 Secret Key'
     : '请输入腾讯云 Secret Key'
+  const curseForgeApiKeyPlaceholder = settings.curseforgeApiKeyConfigured
+    ? '留空则保留当前 CurseForge API Key'
+    : '请输入 CurseForge API Key'
   const trimmedReverseProxyDomain = String(watchedReverseProxyDomain ?? '').trim()
   const reverseProxyUrl = trimmedReverseProxyDomain
     ? `${watchedHttpsEnabled ? 'https' : 'http'}://${trimmedReverseProxyDomain}:${watchedReverseProxyPort}`
@@ -380,6 +383,30 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps = {}) {
                 <Form.Item label="自动备份保留数量" name="maxBackupRetention" tooltip="自动备份最多保留的文件数">
                   <InputNumber min={1} max={100} addonAfter="个备份" />
                 </Form.Item>
+              </div>
+            </section>
+
+            <section className="settings-card">
+              <div className="settings-card__heading settings-card__heading--compact">
+                <div className="settings-card__icon"><CloudSyncOutlined /></div>
+                <div><h2>CurseForge 接入</h2><p>ARK: Survival Ascended 官方 MOD 目录</p></div>
+              </div>
+              <div className="settings-card__body">
+                <Form.Item
+                  label="CurseForge API Key"
+                  name="curseforgeApiKey"
+                  tooltip="用于从 CurseForge 官方 REST API 搜索 ASA MOD；密钥仅由后端加密保存和使用"
+                  rules={[{ max: 512, message: 'API Key 不能超过 512 个字符' }]}
+                >
+                  <Input.Password
+                    prefix={<KeyOutlined />}
+                    placeholder={curseForgeApiKeyPlaceholder}
+                    autoComplete="off"
+                  />
+                </Form.Item>
+                <Text type="secondary">
+                  可在 <a href="https://support.curseforge.com/en/support/solutions/articles/9000208346-about-the-curseforge-api-and-how-to-apply-for-a-key" target="_blank" rel="noreferrer">CurseForge 官方申请页</a>获取 API Key
+                </Text>
               </div>
             </section>
             <section className="settings-card">

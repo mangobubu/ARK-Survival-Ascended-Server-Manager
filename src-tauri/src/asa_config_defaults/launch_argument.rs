@@ -88,9 +88,26 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
         DefaultValue::Bool(true),
         Target::LaunchArgument,
     ),
+    default("noDinos", DefaultValue::Bool(false), Target::LaunchArgument),
     default(
-        "logTimestamp",
-        DefaultValue::Bool(true),
+        "noWildBabies",
+        DefaultValue::Bool(false),
         Target::LaunchArgument,
     ),
+    default(
+        "disableCustomCosmetics",
+        DefaultValue::Bool(false),
+        Target::LaunchArgument,
+    ),
+    default(
+        "unstasisDinoObstructionCheck",
+        DefaultValue::Bool(false),
+        Target::LaunchArgument,
+    ),
+    default(
+        "useServerNetSpeedCheck",
+        DefaultValue::Bool(false),
+        Target::LaunchArgument,
+    ),
+    default("noSound", DefaultValue::Bool(false), Target::LaunchArgument),
 ];

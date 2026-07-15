@@ -23,7 +23,8 @@ use tokio::process::Command;
 use crate::models::{ServerInstance, ServerStatus};
 
 pub(crate) use crate::server_lifecycle_stop::{
-    restart_instance_for_runtime, stop_instance_for_runtime,
+    apply_instance_config_and_restart_for_runtime, restart_instance_for_runtime,
+    stop_instance_for_runtime,
 };
 
 pub(crate) async fn start_instance_for_runtime(
@@ -31,19 +32,61 @@ pub(crate) async fn start_instance_for_runtime(
     runtime: AppRuntime,
     instance_id: String,
 ) -> Result<ServerInstance, String> {
+    let _operation = runtime.begin_lifecycle_operation(&instance_id)?;
+    start_instance_task(app, runtime, instance_id).await
+}
+
+pub(crate) async fn start_instance_task(
+    app: AppHandle,
+    runtime: AppRuntime,
+    instance_id: String,
+) -> Result<ServerInstance, String> {
+    start_instance_task_with_config_state(app, runtime, instance_id, true).await
+}
+
+pub(crate) async fn start_instance_after_config_saved(
+    app: AppHandle,
+    runtime: AppRuntime,
+    instance_id: String,
+) -> Result<ServerInstance, String> {
+    start_instance_task_with_config_state(app, runtime, instance_id, false).await
+}
+
+async fn start_instance_task_with_config_state(
+    app: AppHandle,
+    runtime: AppRuntime,
+    instance_id: String,
+    save_current_config: bool,
+) -> Result<ServerInstance, String> {
     let instance = runtime.get_instance(&instance_id)?;
-    if instance.status == ServerStatus::Running {
+    if matches!(
+        instance.status,
+        ServerStatus::Running | ServerStatus::Starting
+    ) {
         return Ok(with_current_server_version(instance));
+    }
+    if matches!(
+        instance.status,
+        ServerStatus::Stopping | ServerStatus::Updating | ServerStatus::BackingUp
+    ) {
+        return Err(format!(
+            "{} 正在执行其他生命周期任务，当前不能启动",
+            instance.name
+        ));
     }
     let config = normalize_required_rcon_config(runtime.get_config(&instance_id)?)?;
     let mods = runtime.get_mods(&instance_id)?;
-    let instance = instance_config_commands::save_config_for_runtime(
-        &app,
-        &runtime,
-        &instance_id,
-        config.clone(),
-        mods.clone(),
-    )?;
+    let instance = if save_current_config {
+        instance_config_commands::save_config_for_runtime(
+            &app,
+            &runtime,
+            &instance_id,
+            config.clone(),
+            mods.clone(),
+        )?
+    } else {
+        instance
+    };
     let executable = ark_config::server_executable(&instance).ok_or_else(|| {
         format!(
             "未找到 ASA 服务端可执行文件，请先安装/更新实例：{}",

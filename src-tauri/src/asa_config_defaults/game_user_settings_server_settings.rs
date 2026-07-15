@@ -151,12 +151,12 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
     default(
         "resourceNoReplenishRadiusPlayers",
         DefaultValue::U32(1),
-        Target::GameUserSettingsServerSettings,
+        Target::GameIniShooterGameMode,
     ),
     default(
         "resourceNoReplenishRadiusStructures",
         DefaultValue::U32(1),
-        Target::GameUserSettingsServerSettings,
+        Target::GameIniShooterGameMode,
     ),
     default(
         "dinoCount",
@@ -171,17 +171,17 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
     default(
         "supplyCrateLootQualityMultiplier",
         DefaultValue::U32(1),
-        Target::GameUserSettingsServerSettings,
+        Target::GameIniShooterGameMode,
     ),
     default(
         "fishingLootQualityMultiplier",
         DefaultValue::U32(1),
-        Target::GameUserSettingsServerSettings,
+        Target::GameIniShooterGameMode,
     ),
     default(
         "fuelConsumptionIntervalMultiplier",
         DefaultValue::U32(1),
-        Target::GameUserSettingsServerSettings,
+        Target::GameIniShooterGameMode,
     ),
     default(
         "itemStackSizeMultiplier",
@@ -191,17 +191,17 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
     default(
         "globalSpoilingTimeMultiplier",
         DefaultValue::U32(1),
-        Target::GameUserSettingsServerSettings,
+        Target::GameIniShooterGameMode,
     ),
     default(
         "globalItemDecompositionTimeMultiplier",
         DefaultValue::U32(1),
-        Target::GameUserSettingsServerSettings,
+        Target::GameIniShooterGameMode,
     ),
     default(
         "globalCorpseDecompositionTimeMultiplier",
         DefaultValue::U32(1),
-        Target::GameUserSettingsServerSettings,
+        Target::GameIniShooterGameMode,
     ),
     default(
         "structureLimit",
@@ -211,7 +211,7 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
     default(
         "disablePlacementCollision",
         DefaultValue::Bool(true),
-        Target::GameUserSettingsServerSettings,
+        Target::GameIniShooterGameMode,
     ),
     default(
         "pveStructureDecay",
@@ -311,22 +311,22 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
     default(
         "preventHibernation",
         DefaultValue::Bool(false),
-        Target::GameUserSettingsServerSettings,
+        Target::LaunchArgument,
     ),
     default(
         "stasisKeepControllers",
         DefaultValue::Bool(false),
-        Target::GameUserSettingsServerSettings,
+        Target::LaunchArgument,
     ),
     default(
         "useStructureStasisGrid",
         DefaultValue::Bool(true),
-        Target::GameUserSettingsServerSettings,
+        Target::LaunchArgument,
     ),
     default(
         "alwaysTickDedicatedSkeletalMeshes",
         DefaultValue::Bool(false),
-        Target::GameUserSettingsServerSettings,
+        Target::LaunchArgument,
     ),
     default(
         "adminLogging",
@@ -341,6 +341,166 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
     default(
         "crossArkAllowForeignDinoDownloads",
         DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "allowHideDamageSourceFromLogs",
+        DefaultValue::Bool(true),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "allowMultipleAttachedC4",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "allowRaidDinoFeeding",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "clampItemSpoilingTimes",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "clampResourceHarvestDamage",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "destroyTamesOverSoftTameLimit",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "disableImprintDinoBuff",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "forceAllStructureLocking",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "globalVoiceChat",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "preventMateBoost",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "preventOfflinePvP",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "preventSpawnAnimations",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "proximityChat",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "pveDinoDecay",
+        DefaultValue::Bool(true),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "pvpDinoDecay",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "randomSupplyCratePoints",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "serverForceNoHud",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "showFloatingDamageText",
+        DefaultValue::Bool(false),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "showPlayerJoinNotifications",
+        DefaultValue::Bool(true),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "dinoHealthRecoveryMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "maxPersonalTamedDinos",
+        DefaultValue::U32(0),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "maxTamedDinosSoftTameLimit",
+        DefaultValue::U32(5000),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "maxTamedDinosSoftTameLimitCountdown",
+        DefaultValue::U32(604800),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "maxTributeDinos",
+        DefaultValue::U32(20),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "maxTributeItems",
+        DefaultValue::U32(50),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "oxygenSwimSpeedStatMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "platformSaddleBuildAreaBoundsMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "playerHealthRecoveryMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "preventOfflinePvPInterval",
+        DefaultValue::F64(0.0),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "pveDinoDecayPeriodMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "structureResistanceMultiplier",
+        DefaultValue::F64(1.0),
+        Target::GameUserSettingsServerSettings,
+    ),
+    default(
+        "customServerSettings",
+        DefaultValue::Text(""),
         Target::GameUserSettingsServerSettings,
     ),
 ];

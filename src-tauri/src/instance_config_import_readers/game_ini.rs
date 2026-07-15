@@ -61,6 +61,32 @@ pub(crate) fn read_game_ini(document: &IniDocument, config: &mut Map<String, Val
             "GlobalCorpseDecompositionTimeMultiplier",
             "globalCorpseDecompositionTimeMultiplier",
         ),
+        (
+            "CraftingSkillBonusMultiplier",
+            "craftingSkillBonusMultiplier",
+        ),
+        ("CraftXPMultiplier", "craftXpMultiplier"),
+        (
+            "CustomRecipeEffectivenessMultiplier",
+            "customRecipeEffectivenessMultiplier",
+        ),
+        ("CustomRecipeSkillMultiplier", "customRecipeSkillMultiplier"),
+        ("GenericXPMultiplier", "genericXpMultiplier"),
+        ("HarvestXPMultiplier", "harvestXpMultiplier"),
+        ("KillXPMultiplier", "killXpMultiplier"),
+        ("SpecialXPMultiplier", "specialXpMultiplier"),
+        ("HairGrowthSpeedMultiplier", "hairGrowthSpeedMultiplier"),
+        ("MaxFallSpeedMultiplier", "maxFallSpeedMultiplier"),
+        ("PoopIntervalMultiplier", "poopIntervalMultiplier"),
+        (
+            "WildDinoCharacterFoodDrainMultiplier",
+            "wildDinoFoodDrainMultiplier",
+        ),
+        ("PhotoModeRangeLimit", "photoModeRangeLimit"),
+        (
+            "WirelessCraftingRangeOverride",
+            "wirelessCraftingRangeOverride",
+        ),
     ] {
         map_f64(document, config, GAME_MODE_SETTINGS, ini_key, config_key);
     }
@@ -85,7 +111,12 @@ pub(crate) fn read_game_ini(document: &IniDocument, config: &mut Map<String, Val
             "disablePlacementCollision",
         ),
         ("bAllowSpeedLeveling", "allowSpeedLeveling"),
-        ("bPvEAllowTribeWar", "tribeAlliances"),
+        ("bAllowUnlimitedRespecs", "allowUnlimitedRespecs"),
+        ("bDisablePhotoMode", "disablePhotoMode"),
+        ("bShowCreativeMode", "showCreativeMode"),
+        ("bUseDinoLevelUpAnimations", "useDinoLevelUpAnimations"),
+        ("bDisableWirelessCrafting", "disableWirelessCrafting"),
+        ("bDisableFriendlyFire", "disableFriendlyFirePvP"),
         ("bPvEDisableFriendlyFire", "disableFriendlyFire"),
     ] {
         map_bool(document, config, GAME_MODE_SETTINGS, ini_key, config_key);

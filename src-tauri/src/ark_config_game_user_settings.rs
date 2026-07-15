@@ -1,5 +1,6 @@
 use crate::{
     ark_config_mods::active_mod_ids,
+    ark_config_values::append_custom_ini_settings,
     models::{ModItem, ServerInstance},
 };
 use serde_json::Value;
@@ -21,6 +22,7 @@ pub(crate) fn render_game_user_settings(
     server_balance::append_balance_server_settings(&mut lines, config);
     map_specific::append_map_specific_settings(&mut lines, instance, config);
     lines.push(format!("ActiveMods={active_mods}"));
+    append_custom_ini_settings(&mut lines, config, "customServerSettings");
     lines.push(String::new());
     session_settings::append_session_settings(&mut lines, instance, config);
     lines.push(String::new());

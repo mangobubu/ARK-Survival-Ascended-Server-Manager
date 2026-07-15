@@ -67,12 +67,100 @@ pub(super) fn append_basic_server_settings(
             ini_bool(bool_value(config, "hardcore", false))
         ),
         format!(
+            "AutoSavePeriodMinutes={}",
+            number_u32(config, "saveInterval", 15)
+        ),
+        format!(
+            "DisableStructureDecayPvE={}",
+            ini_bool(!bool_value(config, "pveStructureDecay", false))
+        ),
+        format!(
+            "PreventTribeAlliances={}",
+            ini_bool(!bool_value(config, "tribeAlliances", true))
+        ),
+        format!(
             "EnablePvPGamma={}",
             ini_bool(bool_value(config, "enablePvPGamma", true))
         ),
         format!(
             "AllowHitMarkers={}",
             ini_bool(bool_value(config, "allowHitMarkers", true))
+        ),
+        format!(
+            "AllowHideDamageSourceFromLogs={}",
+            ini_bool(bool_value(config, "allowHideDamageSourceFromLogs", true))
+        ),
+        format!(
+            "AllowMultipleAttachedC4={}",
+            ini_bool(bool_value(config, "allowMultipleAttachedC4", false))
+        ),
+        format!(
+            "AllowRaidDinoFeeding={}",
+            ini_bool(bool_value(config, "allowRaidDinoFeeding", false))
+        ),
+        format!(
+            "ClampItemSpoilingTimes={}",
+            ini_bool(bool_value(config, "clampItemSpoilingTimes", false))
+        ),
+        format!(
+            "ClampResourceHarvestDamage={}",
+            ini_bool(bool_value(config, "clampResourceHarvestDamage", false))
+        ),
+        format!(
+            "DestroyTamesOverTheSoftTameLimit={}",
+            ini_bool(bool_value(config, "destroyTamesOverSoftTameLimit", false))
+        ),
+        format!(
+            "DisableImprintDinoBuff={}",
+            ini_bool(bool_value(config, "disableImprintDinoBuff", false))
+        ),
+        format!(
+            "ForceAllStructureLocking={}",
+            ini_bool(bool_value(config, "forceAllStructureLocking", false))
+        ),
+        format!(
+            "GlobalVoiceChat={}",
+            ini_bool(bool_value(config, "globalVoiceChat", false))
+        ),
+        format!(
+            "PreventMateBoost={}",
+            ini_bool(bool_value(config, "preventMateBoost", false))
+        ),
+        format!(
+            "PreventOfflinePvP={}",
+            ini_bool(bool_value(config, "preventOfflinePvP", false))
+        ),
+        format!(
+            "PreventSpawnAnimations={}",
+            ini_bool(bool_value(config, "preventSpawnAnimations", false))
+        ),
+        format!(
+            "ProximityChat={}",
+            ini_bool(bool_value(config, "proximityChat", false))
+        ),
+        format!(
+            "DisableDinoDecayPvE={}",
+            ini_bool(!bool_value(config, "pveDinoDecay", true))
+        ),
+        format!(
+            "PvPDinoDecay={}",
+            ini_bool(bool_value(config, "pvpDinoDecay", false))
+        ),
+        format!(
+            "RandomSupplyCratePoints={}",
+            ini_bool(bool_value(config, "randomSupplyCratePoints", false))
+        ),
+        format!(
+            "ServerForceNoHUD={}",
+            ini_bool(bool_value(config, "serverForceNoHud", false))
+        ),
+        format!(
+            "ShowFloatingDamageText={}",
+            ini_bool(bool_value(config, "showFloatingDamageText", false))
+        ),
+        format!(
+            "DontAlwaysNotifyPlayerJoined={}",
+            ini_bool(!bool_value(config, "showPlayerJoinNotifications", true))
         ),
         format!(
             "AllowThirdPersonPlayer={}",
@@ -146,6 +234,7 @@ pub(super) fn append_basic_server_settings(
             "NoTributeDownloads={}",
             ini_bool(transfer.no_tribute_downloads)
         ),
+        "DifficultyOffset=1".to_string(),
         format!(
             "OverrideOfficialDifficulty={}",
             number_f64(config, "difficulty", 5.0)

@@ -45,6 +45,7 @@ pub(crate) async fn handle_web_invoke(
         "apply_instance_config" => config::apply_instance_config(app, runtime, &args).await,
         "update_instance_mods" => config::update_instance_mods(&app, &runtime, &args),
         "check_mod_updates" => config::check_mod_updates(&args),
+        "search_curseforge_mods" => config::search_curseforge_mods(&runtime, &args).await,
         "install_or_update_instance" => {
             instances::install_or_update_instance(app, runtime, &args).await
         }

@@ -61,6 +61,18 @@ pub(super) fn append_balance_server_settings(lines: &mut Vec<String>, config: &V
             number_f64(config, "dinoStaminaDrainMultiplier", 1.0)
         ),
         format!(
+            "DinoCharacterHealthRecoveryMultiplier={}",
+            number_f64(config, "dinoHealthRecoveryMultiplier", 1.0)
+        ),
+        format!(
+            "PlayerCharacterHealthRecoveryMultiplier={}",
+            number_f64(config, "playerHealthRecoveryMultiplier", 1.0)
+        ),
+        format!(
+            "OxygenSwimSpeedStatMultiplier={}",
+            number_f64(config, "oxygenSwimSpeedStatMultiplier", 1.0)
+        ),
+        format!(
             "DayCycleSpeedScale={}",
             number_f64(config, "dayCycleSpeed", 1.0)
         ),
@@ -85,6 +97,26 @@ pub(super) fn append_balance_server_settings(lines: &mut Vec<String>, config: &V
             number_u32(config, "maxTamedDinos", 5000)
         ),
         format!(
+            "MaxPersonalTamedDinos={}",
+            number_u32(config, "maxPersonalTamedDinos", 0)
+        ),
+        format!(
+            "MaxTamedDinos_SoftTameLimit={}",
+            number_u32(config, "maxTamedDinosSoftTameLimit", 5000)
+        ),
+        format!(
+            "MaxTamedDinos_SoftTameLimit_CountdownForDeletionDuration={}",
+            number_u32(config, "maxTamedDinosSoftTameLimitCountdown", 604800)
+        ),
+        format!(
+            "MaxTributeDinos={}",
+            number_u32(config, "maxTributeDinos", 20).clamp(20, 273)
+        ),
+        format!(
+            "MaxTributeItems={}",
+            number_u32(config, "maxTributeItems", 50).clamp(50, 154)
+        ),
+        format!(
             "ItemStackSizeMultiplier={}",
             number_f64(config, "itemStackSizeMultiplier", 1.0)
         ),
@@ -99,6 +131,22 @@ pub(super) fn append_balance_server_settings(lines: &mut Vec<String>, config: &V
         format!(
             "PerPlatformMaxStructuresMultiplier={}",
             number_f64(config, "platformStructureMultiplier", 1.0)
+        ),
+        format!(
+            "PlatformSaddleBuildAreaBoundsMultiplier={}",
+            number_f64(config, "platformSaddleBuildAreaBoundsMultiplier", 1.0)
+        ),
+        format!(
+            "PreventOfflinePvPInterval={}",
+            number_f64(config, "preventOfflinePvPInterval", 0.0)
+        ),
+        format!(
+            "PvEDinoDecayPeriodMultiplier={}",
+            number_f64(config, "pveDinoDecayPeriodMultiplier", 1.0)
+        ),
+        format!(
+            "StructureResistanceMultiplier={}",
+            number_f64(config, "structureResistanceMultiplier", 1.0)
         ),
         format!(
             "TheMaxStructuresInRange={}",

@@ -1,6 +1,7 @@
 use crate::{
     ark_config_game_user_settings::render_game_user_settings,
     ark_config_ini::{render_engine_ini, render_game_ini},
+    ark_config_ini_merge::merge_ini_file,
     ark_config_launch,
     models::{ModItem, ServerInstance},
 };
@@ -37,9 +38,22 @@ pub fn apply_instance_config(
     let game_user_settings_path = config_dir.join("GameUserSettings.ini");
     let game_ini_path = config_dir.join("Game.ini");
     let engine_ini_path = config_dir.join("Engine.ini");
-    fs::write(
+    merge_ini_file(
         &game_user_settings_path,
-        render_game_user_settings(instance, config, mods),
+        &render_game_user_settings(instance, config, mods),
+        &[
+            ("ServerSettings", "CrossARKAllowForeignDinoDownloads"),
+            ("ServerSettings", "LimitBunkersPerTribe"),
+            ("ServerSettings", "AllowBunkersInPreventionZones"),
+            ("ServerSettings", "AllowRidingDinosInsideBunkers"),
+            ("ServerSettings", "AllowBunkerModulesAboveGround"),
+            ("ServerSettings", "AllowDinoAIInsideBunkers"),
+            ("ServerSettings", "AllowBunkerModulesInPreventionZones"),
+            ("ServerSettings", "LimitBunkersPerTribeNum"),
+            ("ServerSettings", "MinDistanceBetweenBunkers"),
+            ("ServerSettings", "EnemyAccessBunkerHPThreshold"),
+            ("ServerSettings", "BunkerUnderHPThresholdDmgMultiplier"),
+        ],
     )
     .map_err(|error| {
         format!(
@@ -47,9 +61,16 @@ pub fn apply_instance_config(
             game_user_settings_path.display()
         )
     })?;
-    fs::write(&game_ini_path, render_game_ini(config))
-        .map_err(|error| format!("无法写入 Game.ini {}：{error}", game_ini_path.display()))?;
-    fs::write(&engine_ini_path, render_engine_ini(config))
+    merge_ini_file(
+        &game_ini_path,
+        &render_game_ini(config),
+        &[(
+            "/Script/ShooterGame.ShooterGameMode",
+            "ConfigOverrideItemMaxQuantity",
+        )],
+    )
+    .map_err(|error| format!("无法写入 Game.ini {}：{error}", game_ini_path.display()))?;
+    merge_ini_file(&engine_ini_path, &render_engine_ini(config), &[])
         .map_err(|error| format!("无法写入 Engine.ini {}：{error}", engine_ini_path.display()))?;
 
     Ok(AppliedConfig {

@@ -39,4 +39,5 @@ src-tauri/target/
 
 # Local tool/runtime state
 .codex/config.toml
+.playwright-mcp/
 .tauri-web-dev.pid

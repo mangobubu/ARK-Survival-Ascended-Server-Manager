@@ -32,6 +32,7 @@ pub(crate) fn save_config_for_runtime(
     config: Value,
     mods: Vec<ModItem>,
 ) -> Result<ServerInstance, String> {
+    validate_mods(&mods)?;
     let config = normalize_required_rcon_config(config)?;
     let instance = runtime.save_config_and_mods(instance_id, config.clone(), mods.clone())?;
     let applied = ark_config::apply_instance_config(&instance, &config, &mods)?;
@@ -67,6 +68,18 @@ pub(crate) fn save_config_for_runtime(
     Ok(instance)
 }
 
+pub(crate) fn save_config_with_operation_for_runtime(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance_id: &str,
+    config: Value,
+    mods: Vec<ModItem>,
+) -> Result<ServerInstance, String> {
+    let _configuration_operation = runtime.begin_configuration_operation()?;
+    let _operation = runtime.begin_lifecycle_operation(instance_id)?;
+    save_config_for_runtime(app, runtime, instance_id, config, mods)
+}
+
 pub(crate) fn update_instance_mods_for_runtime(
     app: &AppHandle,
     runtime: &AppRuntime,
@@ -79,6 +92,17 @@ pub(crate) fn update_instance_mods_for_runtime(
     publish_instance_config_changed(app, runtime, instance_id)?;
     publish_instances_changed(app);
     Ok(mods)
+}
+
+pub(crate) fn update_instance_mods_with_operation_for_runtime(
+    app: &AppHandle,
+    runtime: &AppRuntime,
+    instance_id: &str,
+    mods: Vec<ModItem>,
+) -> Result<Vec<ModItem>, String> {
+    let _configuration_operation = runtime.begin_configuration_operation()?;
+    let _operation = runtime.begin_lifecycle_operation(instance_id)?;
+    update_instance_mods_for_runtime(app, runtime, instance_id, mods)
 }
 
 pub(crate) fn check_mod_updates_for_runtime(mods: Vec<ModItem>) -> Result<Vec<ModItem>, String> {
@@ -119,7 +143,7 @@ pub fn save_instance_config(
     config: Value,
     mods: Vec<ModItem>,
 ) -> Result<ServerInstance, String> {
-    save_config_for_runtime(&app, runtime.inner(), &instance_id, config, mods)
+    save_config_with_operation_for_runtime(&app, runtime.inner(), &instance_id, config, mods)
         .map(with_current_server_version)
 }
 
@@ -130,7 +154,7 @@ pub fn update_instance_mods(
     instance_id: String,
     mods: Vec<ModItem>,
 ) -> Result<Vec<ModItem>, String> {
-    update_instance_mods_for_runtime(&app, runtime.inner(), &instance_id, mods)
+    update_instance_mods_with_operation_for_runtime(&app, runtime.inner(), &instance_id, mods)
 }
 
 #[tauri::command]
@@ -174,7 +198,7 @@ fn publish_sync_event_best_effort<T: Serialize>(app: &AppHandle, event_name: &st
     let _ = publish_sync_event(app, event_name, payload);
 }
 
-fn validate_mods(mods: &[ModItem]) -> Result<(), String> {
+pub(crate) fn validate_mods(mods: &[ModItem]) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
     for item in mods {
         if item.id.trim().is_empty() {

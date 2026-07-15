@@ -60,6 +60,8 @@ export interface GlobalSettings {
   autoUpdateOnStart: boolean
   autoRestartOnCrash: boolean
   maxBackupRetention: number
+  curseforgeApiKey: string
+  curseforgeApiKeyConfigured: boolean
   webManagementEnabled: boolean
   webServerPort: number
   webAdminUsername: string
@@ -175,6 +177,24 @@ export interface ModItem {
   updateAvailable?: boolean
 }
 
+export interface CurseForgeModSummary {
+  id: string
+  name: string
+  summary: string
+  author: string
+  version: string
+  size: string
+  downloadCount: number
+  dateModified: string
+  thumbnailUrl: string | null
+  websiteUrl: string
+}
+
+export interface CurseForgeModSearchResult {
+  items: CurseForgeModSummary[]
+  totalCount: number
+}
+
 export interface ItemStackOption {
   label: string
   zhLabel?: string
@@ -272,8 +292,16 @@ export interface ServerConfig {
   pve: boolean
   hardcore: boolean
   disableFriendlyFire: boolean
+  disableFriendlyFirePvP: boolean
   enablePvPGamma: boolean
   allowHitMarkers: boolean
+  allowHideDamageSourceFromLogs: boolean
+  globalVoiceChat: boolean
+  proximityChat: boolean
+  preventSpawnAnimations: boolean
+  serverForceNoHud: boolean
+  showFloatingDamageText: boolean
+  showPlayerJoinNotifications: boolean
   difficulty: number
   xpMultiplier: number
   tamingSpeed: number
@@ -290,6 +318,9 @@ export interface ServerConfig {
   playerStaminaDrainMultiplier: number
   dinoFoodDrainMultiplier: number
   dinoStaminaDrainMultiplier: number
+  dinoHealthRecoveryMultiplier: number
+  oxygenSwimSpeedStatMultiplier: number
+  playerHealthRecoveryMultiplier: number
   thirdPerson: boolean
   crosshair: boolean
   showMapPlayer: boolean
@@ -316,6 +347,9 @@ export interface ServerConfig {
   supplyCrateLootQualityMultiplier: number
   fishingLootQualityMultiplier: number
   fuelConsumptionIntervalMultiplier: number
+  clampItemSpoilingTimes: boolean
+  clampResourceHarvestDamage: boolean
+  randomSupplyCratePoints: boolean
   itemStackSizeMultiplier: number
   itemStackOverrides: ItemStackOverride[]
   globalSpoilingTimeMultiplier: number
@@ -333,8 +367,14 @@ export interface ServerConfig {
   babyImprintingStatScaleMultiplier: number
   babyImprintAmountMultiplier: number
   allowAnyoneBabyImprintCuddle: boolean
+  disableImprintDinoBuff: boolean
+  preventMateBoost: boolean
+  poopIntervalMultiplier: number
+  wildDinoFoodDrainMultiplier: number
   structureLimit: number
   platformStructureMultiplier: number
+  platformSaddleBuildAreaBoundsMultiplier: number
+  structureResistanceMultiplier: number
   disablePlacementCollision: boolean
   pveAllowStructuresAtSupplyDrops: boolean
   enableExtraStructurePreventionVolumes: boolean
@@ -351,6 +391,10 @@ export interface ServerConfig {
   fastDecayUnsnappedCoreStructures: boolean
   limitGeneratorsNum: number
   limitGeneratorsRange: number
+  allowMultipleAttachedC4: boolean
+  forceAllStructureLocking: boolean
+  disableWirelessCrafting: boolean
+  wirelessCraftingRangeOverride: number
   allowCryoFridgeOnSaddle: boolean
   disableCryopodEnemyCheck: boolean
   disableCryopodFridgeRequirement: boolean
@@ -360,6 +404,12 @@ export interface ServerConfig {
   forceAllowCaveFlyers: boolean
   allowFlyingStaminaRecovery: boolean
   raidDinoFoodDrainMultiplier: number
+  allowRaidDinoFeeding: boolean
+  maxPersonalTamedDinos: number
+  maxTamedDinosSoftTameLimit: number
+  maxTamedDinosSoftTameLimitCountdown: number
+  destroyTamesOverSoftTameLimit: boolean
+  useDinoLevelUpAnimations: boolean
   whitelist: boolean
   exclusiveJoin: boolean
   preventDownloadItems: boolean
@@ -373,6 +423,8 @@ export interface ServerConfig {
   tributeCharacterExpirationSeconds: number
   tributeDinoExpirationSeconds: number
   tributeItemExpirationSeconds: number
+  maxTributeDinos: number
+  maxTributeItems: number
   clusterDirOverride: string
   noTransferFromFiltering: boolean
   enableIdlePlayerKick: boolean
@@ -382,6 +434,25 @@ export interface ServerConfig {
   tribeNameChangeCooldown: number
   maxAlliancesPerTribe: number
   maxTribesPerAlliance: number
+  preventOfflinePvP: boolean
+  preventOfflinePvPInterval: number
+  pveDinoDecay: boolean
+  pveDinoDecayPeriodMultiplier: number
+  pvpDinoDecay: boolean
+  allowUnlimitedRespecs: boolean
+  craftingSkillBonusMultiplier: number
+  craftXpMultiplier: number
+  customRecipeEffectivenessMultiplier: number
+  customRecipeSkillMultiplier: number
+  genericXpMultiplier: number
+  harvestXpMultiplier: number
+  killXpMultiplier: number
+  specialXpMultiplier: number
+  hairGrowthSpeedMultiplier: number
+  maxFallSpeedMultiplier: number
+  disablePhotoMode: boolean
+  photoModeRangeLimit: number
+  showCreativeMode: boolean
   processPriority: 'normal' | 'aboveNormal' | 'high'
   cpuAffinity: string
   memoryWarningGb: number
@@ -401,12 +472,20 @@ export interface ServerConfig {
   activeEvent: string
   useDynamicConfig: boolean
   customDynamicConfigUrl: string
+  noDinos: boolean
+  noWildBabies: boolean
+  disableCustomCosmetics: boolean
+  unstasisDinoObstructionCheck: boolean
+  useServerNetSpeedCheck: boolean
+  noSound: boolean
   customLaunchArgs: string
+  customServerSettings: string
+  customGameIniSettings: string
+  customEngineIniSettings: string
   serverGameLog: boolean
   serverGameLogIncludeTribe: boolean
   adminLogging: boolean
   chatLogging: boolean
-  logTimestamp: boolean
   logLevel: 'normal' | 'verbose' | 'debug'
   rotateSizeMb: number
   logRetentionDays: number

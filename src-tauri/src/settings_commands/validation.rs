@@ -36,6 +36,9 @@ pub(super) fn validate_settings(settings: &GlobalSettings) -> Result<(), String>
     if !(1..=100).contains(&settings.max_backup_retention) {
         return Err("自动备份保留数量必须在 1-100 之间".to_string());
     }
+    if settings.curseforge_api_key.len() > 512 {
+        return Err("CurseForge API Key 不能超过 512 个字符".to_string());
+    }
     if !(1024..=65535).contains(&settings.web_server_port) {
         return Err("Web 访问端口必须在 1024-65535 之间".to_string());
     }

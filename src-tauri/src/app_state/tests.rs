@@ -17,6 +17,8 @@ fn test_runtime(data_dir: &Path) -> AppRuntime {
         data_dir: Arc::new(data_dir.to_path_buf()),
         data: Arc::new(Mutex::new(ManagerData::default())),
         processes: Arc::new(Mutex::new(HashMap::new())),
+        configuration_operation: Arc::new(Mutex::new(false)),
+        lifecycle_operations: Arc::new(Mutex::new(HashSet::new())),
         update_cancels: Arc::new(Mutex::new(HashMap::new())),
         online_players: Arc::new(Mutex::new(HashMap::new())),
     }
@@ -46,6 +48,50 @@ fn test_instance(id: &str, status: ServerStatus) -> ServerInstance {
         last_error: Some("旧错误".to_string()),
         skip_auto_update_on_start_once: false,
     }
+}
+
+#[test]
+fn 同一实例生命周期操作不能并发执行() {
+    let temp = tempfile::tempdir().expect("创建临时目录");
+    let runtime = test_runtime(temp.path());
+
+    let operation = runtime
+        .begin_lifecycle_operation("asa-island")
+        .expect("首次生命周期操作应成功");
+    let error = runtime
+        .begin_lifecycle_operation("asa-island")
+        .err()
+        .expect("并发生命周期操作应被拒绝");
+    assert!(error.contains("正在执行"));
+    assert!(runtime.begin_update("asa-island").is_err());
+    assert!(runtime.begin_update("asa-scorched-earth").is_ok());
+
+    drop(operation);
+    let update = runtime
+        .begin_update("asa-island")
+        .expect("停止后可以开始更新");
+    assert!(runtime.begin_lifecycle_operation("asa-island").is_err());
+    let stop = runtime
+        .begin_stop_operation("asa-island")
+        .expect("停止操作可以进入并取消更新");
+
+    drop(stop);
+    drop(update);
+    assert!(runtime.begin_lifecycle_operation("asa-island").is_ok());
+}
+
+#[test]
+fn 配置操作在整个管理器内串行执行() {
+    let temp = tempfile::tempdir().expect("创建临时目录");
+    let runtime = test_runtime(temp.path());
+
+    let operation = runtime
+        .begin_configuration_operation()
+        .expect("首次配置操作应成功");
+    assert!(runtime.begin_configuration_operation().is_err());
+
+    drop(operation);
+    assert!(runtime.begin_configuration_operation().is_ok());
 }
 
 #[test]
@@ -324,4 +370,37 @@ fn 保存配置会同步实例列表元数据() {
     assert_eq!(stored.max_players, 64);
     assert_eq!(stored.mode, "PvP");
     assert_eq!(stored.cluster_id, "Cluster-B");
+}
+
+#[test]
+fn 配置元数据预检拒绝端口冲突且不修改实例() {
+    let temp = tempfile::tempdir().expect("创建临时目录");
+    let runtime = test_runtime(temp.path());
+    let first_payload = test_payload(&temp.path().join("first-instance"));
+    let mut second_payload = test_payload(&temp.path().join("second-instance"));
+    second_payload.name = "第二个实例".to_string();
+    let first = runtime
+        .create_instance(first_payload)
+        .expect("创建首个实例");
+    let second = runtime
+        .create_instance(second_payload)
+        .expect("创建第二个实例");
+
+    let mut config = runtime.get_config(&first.id).expect("读取首个实例配置");
+    config
+        .as_object_mut()
+        .expect("配置是对象")
+        .insert("gamePort".to_string(), json!(second.game_port));
+
+    let error = runtime
+        .validate_config_metadata(&first.id, &config)
+        .expect_err("预检应拒绝已被其他实例占用的端口");
+    assert!(error.contains("已被其他实例占用"));
+    assert_eq!(
+        runtime
+            .get_instance(&first.id)
+            .expect("读取首个实例")
+            .game_port,
+        first.game_port
+    );
 }

@@ -109,7 +109,7 @@ pub(super) async fn run_steamcmd_update(
                     "已取消安装/更新，正在结束 SteamCMD 进程树",
                 )?;
                 if let Some(pid) = child_pid {
-                    kill_process_tree(pid).await;
+                    let _ = kill_process_tree(pid).await;
                 }
                 let _ = child.kill().await;
                 let _ = child.wait().await;
@@ -129,7 +129,7 @@ pub(super) async fn run_steamcmd_update(
                 }
                 Err(_) if started_at.elapsed() >= Duration::from_secs(60 * 60) => {
                     if let Some(pid) = child_pid {
-                        kill_process_tree(pid).await;
+                        let _ = kill_process_tree(pid).await;
                     }
                     let _ = child.kill().await;
                     let _ = child.wait().await;

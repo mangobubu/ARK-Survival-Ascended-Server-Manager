@@ -102,6 +102,14 @@ const PLAYER_STATUS_POLL_INTERVAL_MS = 5_000
 const BACKEND_SYNC_WATCHDOG_INTERVAL_MS = 2_000
 const appVersionLabel = `v${__APP_VERSION__} Rust Backend`
 
+type ConfigOperationKind = 'save' | 'apply'
+
+interface ConfigOperation {
+  id: number
+  instanceId: string
+  kind: ConfigOperationKind
+}
+
 export default function App() {
   const [instances, setInstances] = useState<ServerInstance[]>([])
   const [selectedId, setSelectedId] = useState('')
@@ -115,6 +123,8 @@ export default function App() {
   const [initialDataReady, setInitialDataReady] = useState(false)
   const [jobProgress, setJobProgress] = useState<Record<string, JobProgress>>({})
   const [checkingMods, setCheckingMods] = useState(false)
+  const [configOperation, setConfigOperation] = useState<ConfigOperation | null>(null)
+  const [applyConfirmationOpen, setApplyConfirmationOpen] = useState(false)
   const [autoScrollLogs, setAutoScrollLogs] = useState(true)
   const [activeLogTab, setActiveLogTab] = useState(APPLICATION_LOG_TAB_KEY)
   const [webDialog, setWebDialog] = useState<WebDialogState>(null)
@@ -124,6 +134,11 @@ export default function App() {
   const serverConsoleLogConsoleRef = useRef<HTMLDivElement>(null)
   const serverFileLogConsoleRef = useRef<HTMLDivElement>(null)
   const instancesRef = useRef<ServerInstance[]>([])
+  const selectedIdRef = useRef('')
+  const configRevisionRef = useRef(0)
+  const configOperationRef = useRef<ConfigOperation | null>(null)
+  const configOperationSequenceRef = useRef(0)
+  const applyConfirmationOpenRef = useRef(false)
   const statusPollInFlightRef = useRef(false)
   const startupAutoUpdateRanRef = useRef(false)
   const steamCmdProgressSamplesRef = useRef<Record<string, { downloadedBytes: number; timestamp: number }>>({})
@@ -131,6 +146,12 @@ export default function App() {
   const [modal, modalContext] = Modal.useModal()
 
   const selected = instances.find((item) => item.id === selectedId)
+  const configOperationBusy = configOperation !== null
+  const savingConfig = configOperation?.kind === 'save'
+  const applyingConfig = configOperation?.kind === 'apply'
+  const selectedLifecycleBusy = selected
+    ? ['starting', 'stopping', 'updating', 'backingUp'].includes(selected.status)
+    : false
   const running = instances.filter((item) => item.status === 'running').length
   const totalPlayers = instances.reduce((sum, item) => sum + item.players, 0)
   const playerCapacity = instances.reduce((sum, item) => sum + item.maxPlayers, 0)
@@ -219,6 +240,10 @@ export default function App() {
   useEffect(() => {
     instancesRef.current = instances
   }, [instances])
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId
+  }, [selectedId])
 
   useEffect(() => {
     if (activeLogTab !== APPLICATION_LOG_TAB_KEY && !instances.some((item) => item.id === activeLogTab)) {
@@ -312,8 +337,11 @@ export default function App() {
     instancesRef.current = loaded
     setInstances(loaded)
     setSelectedId((current) => {
-      if (current && loaded.some((item) => item.id === current)) return current
-      return loaded[0]?.id ?? ''
+      const next = current && loaded.some((item) => item.id === current)
+        ? current
+        : loaded[0]?.id ?? ''
+      selectedIdRef.current = next
+      return next
     })
     setSelectedRows((current) => current.filter((id) => loaded.some((item) => item.id === id)))
     return loaded
@@ -325,6 +353,8 @@ export default function App() {
       getInstanceConfig(instanceId),
       getInstanceMods(instanceId),
     ])
+    if (selectedIdRef.current !== instanceId) return
+    configRevisionRef.current += 1
     setConfig(enforceRequiredRconConfig({ ...defaultConfig, ...loadedConfig }))
     setMods(loadedMods)
     setDirty(false)
@@ -404,6 +434,7 @@ export default function App() {
     unlisteners.push(subscribeBackendEvent(ADD_INSTANCE_CREATED_EVENT, (eventPayload) => {
       if (disposed) return
       replaceInstance(eventPayload.instance)
+      selectedIdRef.current = eventPayload.instance.id
       setSelectedId(eventPayload.instance.id)
       setSelectedRows([eventPayload.instance.id])
       void loadInstanceDetails(eventPayload.instance.id).catch((error) => {
@@ -424,6 +455,7 @@ export default function App() {
         messageApi.info('检测到另一端已更新当前实例配置；已保留你本地尚未保存的编辑')
         return
       }
+      configRevisionRef.current += 1
       setConfig(enforceRequiredRconConfig({ ...defaultConfig, ...payload.config }))
       setMods(payload.mods)
       setDirty(false)
@@ -443,6 +475,8 @@ export default function App() {
         return next
       })
       if (selectedId === removed.id) {
+        selectedIdRef.current = ''
+        configRevisionRef.current += 1
         setSelectedId('')
         setConfig(defaultConfig)
         setMods([])
@@ -630,62 +664,132 @@ export default function App() {
     })
   }
 
+  const beginConfigOperation = (instanceId: string, kind: ConfigOperationKind) => {
+    if (configOperationRef.current) return null
+    const operation: ConfigOperation = {
+      id: ++configOperationSequenceRef.current,
+      instanceId,
+      kind,
+    }
+    configOperationRef.current = operation
+    setConfigOperation(operation)
+    return operation
+  }
+
+  const finishConfigOperation = (operation: ConfigOperation) => {
+    if (configOperationRef.current?.id !== operation.id) return
+    configOperationRef.current = null
+    setConfigOperation((current) => current?.id === operation.id ? null : current)
+  }
+
+  const refreshLogsAfterConfigOperation = async () => {
+    try {
+      await refreshLogs()
+    } catch (error) {
+      messageApi.warning(`配置操作已完成，但刷新日志失败：${String(error)}`)
+    }
+  }
+
   const saveConfig = async () => {
     if (!selected) return
+    if (configOperationRef.current || applyConfirmationOpenRef.current) {
+      messageApi.warning('已有配置操作正在进行，请等待当前操作完成')
+      return
+    }
     const nextConfig = enforceRequiredRconConfig(config)
     if (!nextConfig.adminPassword) {
       setConfig(nextConfig)
       messageApi.warning('请先设置管理员密码，RCON 必须保持启用')
       return
     }
+    const targetInstanceId = selected.id
+    const submittedRevision = configRevisionRef.current
+    const operation = beginConfigOperation(targetInstanceId, 'save')
+    if (!operation) return
     try {
-      const updated = await saveInstanceConfig(selected.id, nextConfig, mods)
+      const updated = await saveInstanceConfig(targetInstanceId, nextConfig, mods)
       replaceInstance(updated)
-      setConfig(nextConfig)
-      setDirty(false)
-      await refreshLogs()
+      if (selectedIdRef.current === targetInstanceId && configRevisionRef.current === submittedRevision) {
+        setConfig(nextConfig)
+        setDirty(false)
+      }
+      await refreshLogsAfterConfigOperation()
       messageApi.success('实例配置已保存并写入文件')
     } catch (error) {
       messageApi.error(`保存实例配置失败：${String(error)}`)
+    } finally {
+      finishConfigOperation(operation)
     }
   }
 
   const applyConfig = () => {
     if (!selected) return
+    if (configOperationRef.current || applyConfirmationOpenRef.current) {
+      messageApi.warning('已有配置操作正在进行，请等待当前操作完成')
+      return
+    }
+    if (selectedLifecycleBusy) {
+      messageApi.warning('实例正在执行生命周期任务，请等待当前操作完成')
+      return
+    }
     const nextConfig = enforceRequiredRconConfig(config)
     if (!nextConfig.adminPassword) {
       setConfig(nextConfig)
       messageApi.warning('请先设置管理员密码，RCON 必须保持启用')
       return
     }
+    const targetInstance = selected
+    const submittedRevision = configRevisionRef.current
+    applyConfirmationOpenRef.current = true
+    setApplyConfirmationOpen(true)
     modal.confirm({
-      title: `保存并应用 ${selected.name}？`,
+      title: `保存并应用 ${targetInstance.name}？`,
       icon: <ReloadOutlined className="confirm-blue-icon" />,
-      content: selected.status === 'running' ? '运行中的实例会先保存世界并重启。' : '配置会写入真实 ARK 配置文件，然后启动实例。',
-      okText: '保存并重启',
+      content: targetInstance.status === 'running' ? '当前实例会先保存世界并完全停止，再写入配置并重新启动。' : '将先确认旧服务端进程已停止，再写入配置并启动实例。',
+      okText: targetInstance.status === 'running' ? '保存并重启' : '保存并启动',
       cancelText: '取消',
+      afterClose: () => {
+        applyConfirmationOpenRef.current = false
+        setApplyConfirmationOpen(false)
+      },
+      onCancel: () => {
+        applyConfirmationOpenRef.current = false
+        setApplyConfirmationOpen(false)
+      },
       onOk: async () => {
+        applyConfirmationOpenRef.current = false
+        setApplyConfirmationOpen(false)
+        const operation = beginConfigOperation(targetInstance.id, 'apply')
+        if (!operation) {
+          messageApi.warning('已有配置操作正在进行，请等待当前操作完成')
+          return
+        }
         try {
-          const updated = await applyInstanceConfig(selected.id, nextConfig, mods)
+          const updated = await applyInstanceConfig(targetInstance.id, nextConfig, mods)
           replaceInstance(updated)
-          setConfig(nextConfig)
-          setDirty(false)
-          await refreshLogs()
-          messageApi.success('配置已应用并已请求重启')
+          if (selectedIdRef.current === targetInstance.id && configRevisionRef.current === submittedRevision) {
+            setConfig(nextConfig)
+            setDirty(false)
+          }
+          await refreshLogsAfterConfigOperation()
+          messageApi.success(targetInstance.status === 'running' ? '配置已保存，旧实例已停止并开始重新启动' : '配置已保存，实例已开始启动')
         } catch (error) {
           messageApi.error(`应用并重启失败：${String(error)}`)
-          throw error
+        } finally {
+          finishConfigOperation(operation)
         }
       },
     })
   }
 
   const updateConfig = <K extends keyof ServerConfig>(key: K, value: ServerConfig[K]) => {
+    configRevisionRef.current += 1
     setConfig((current) => enforceRequiredRconConfig({ ...current, [key]: key === 'rconEnabled' ? true : value }))
     setDirty(true)
   }
 
   const handleModsChange = (next: ModItem[]) => {
+    configRevisionRef.current += 1
     setMods(next)
     setDirty(true)
   }
@@ -694,6 +798,7 @@ export default function App() {
     setCheckingMods(true)
     try {
       const checked = await checkModUpdates(mods)
+      configRevisionRef.current += 1
       setMods(checked)
       setDirty(true)
       messageApi.success('MOD 列表已完成本地校验')
@@ -1016,6 +1121,7 @@ export default function App() {
   }
 
   const selectInstanceInTable = useCallback((id: string) => {
+    selectedIdRef.current = id
     setSelectedId(id)
     setSelectedRows([id])
   }, [])
@@ -1040,8 +1146,8 @@ export default function App() {
         <div className="topbar__actions">
           <Button icon={<PlayCircleFilled />} disabled={selectedRows.length === 0} onClick={() => void runForSelected((item) => startInstance(item))}>启动所选</Button>
           <Button danger icon={<StopFilled />} disabled={selectedRows.length === 0} onClick={() => void runForSelected((item) => stopInstance(item))}>停止所选</Button>
-          <Button icon={<SaveOutlined />} disabled={!selected} onClick={() => void saveConfig()}>保存配置</Button>
-          <Button className="apply-button" icon={<ReloadOutlined />} disabled={!selected} onClick={applyConfig}>应用并重启</Button>
+          <Button icon={<SaveOutlined />} loading={savingConfig} disabled={!selected || configOperationBusy || applyConfirmationOpen} onClick={() => void saveConfig()}>保存配置</Button>
+          <Button className="apply-button" icon={<ReloadOutlined />} loading={applyingConfig} disabled={!selected || configOperationBusy || applyConfirmationOpen || selectedLifecycleBusy} onClick={applyConfig}>应用并重启</Button>
           <Button icon={<SettingOutlined />} aria-label="全局设置" onClick={openSettingsWindow} />
         </div>
       </header>
@@ -1104,6 +1210,8 @@ export default function App() {
                 onApply={applyConfig}
                 onCheckModUpdates={() => void handleCheckModUpdates()}
                 checkingMods={checkingMods}
+                configOperation={configOperation?.instanceId === selected.id ? configOperation.kind : null}
+                actionsDisabled={configOperationBusy || applyConfirmationOpen || selectedLifecycleBusy}
               />
             </Suspense>
           ) : (

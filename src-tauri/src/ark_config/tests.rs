@@ -277,6 +277,7 @@ fn 写入扩展配置到正确文件() {
         "PreventUploadSurvivors=True",
         "NoTributeDownloads=True",
         "OverrideOfficialDifficulty=5",
+        "DifficultyOffset=1",
         "TributeCharacterExpirationSeconds=3600",
         "TributeDinoExpirationSeconds=7200",
         "TributeItemExpirationSeconds=1800",
@@ -379,4 +380,253 @@ fn 写入扩展配置到正确文件() {
         );
     }
     assert!(!lost_colony_server_settings.contains("CrossARKAllowForeignDinoDownloads="));
+}
+
+#[test]
+fn 新增服务端字段写入正确目标并安全追加自定义配置() {
+    let instance = test_instance(Path::new("D:\\ASA"));
+    let mut config = json!({
+        "allowHideDamageSourceFromLogs": false,
+        "allowMultipleAttachedC4": true,
+        "allowRaidDinoFeeding": true,
+        "clampItemSpoilingTimes": true,
+        "clampResourceHarvestDamage": true,
+        "destroyTamesOverSoftTameLimit": true,
+        "disableImprintDinoBuff": true,
+        "forceAllStructureLocking": true,
+        "globalVoiceChat": true,
+        "preventMateBoost": true,
+        "preventOfflinePvP": true,
+        "preventSpawnAnimations": true,
+        "proximityChat": true,
+        "pveDinoDecay": false,
+        "pvpDinoDecay": true,
+        "randomSupplyCratePoints": true,
+        "serverForceNoHud": true,
+        "showFloatingDamageText": true,
+        "showPlayerJoinNotifications": false,
+        "pveStructureDecay": true,
+        "tribeAlliances": false,
+        "saveInterval": 21
+    });
+    let server_numeric = json!({
+        "dinoHealthRecoveryMultiplier": 1.1,
+        "maxPersonalTamedDinos": 12,
+        "maxTamedDinosSoftTameLimit": 3456,
+        "maxTamedDinosSoftTameLimitCountdown": 789,
+        "maxTributeDinos": 22,
+        "maxTributeItems": 55,
+        "oxygenSwimSpeedStatMultiplier": 1.2,
+        "platformSaddleBuildAreaBoundsMultiplier": 1.3,
+        "playerHealthRecoveryMultiplier": 1.4,
+        "preventOfflinePvPInterval": 60.5,
+        "pveDinoDecayPeriodMultiplier": 2.5,
+        "structureResistanceMultiplier": 0.75,
+        "customServerSettings": "ServerPVE=False\nCommunityArray=(A=1)\nCommunityArray=(A=2)\n[Injected]\nInjectedKey=stays-in-server-settings"
+    });
+    config
+        .as_object_mut()
+        .expect("测试配置是对象")
+        .extend(server_numeric.as_object().expect("数值配置是对象").clone());
+    let game_and_launch = json!({
+        "allowUnlimitedRespecs": true,
+        "disablePhotoMode": true,
+        "showCreativeMode": true,
+        "useDinoLevelUpAnimations": false,
+        "disableWirelessCrafting": true,
+        "disableFriendlyFirePvP": true,
+        "craftingSkillBonusMultiplier": 1.5,
+        "craftXpMultiplier": 1.6,
+        "customRecipeEffectivenessMultiplier": 1.7,
+        "customRecipeSkillMultiplier": 1.8,
+        "genericXpMultiplier": 1.9,
+        "harvestXpMultiplier": 2.1,
+        "killXpMultiplier": 2.2,
+        "specialXpMultiplier": 2.3,
+        "hairGrowthSpeedMultiplier": 0.25,
+        "maxFallSpeedMultiplier": 2.4,
+        "poopIntervalMultiplier": 2.5,
+        "wildDinoFoodDrainMultiplier": 2.6,
+        "photoModeRangeLimit": 3500.5,
+        "wirelessCraftingRangeOverride": 4500.5,
+        "customGameIniSettings": "MatingIntervalMultiplier=999\nCustomGameArray=(A=1)\nCustomGameArray=(A=2)",
+        "customEngineIniSettings": "NetServerMaxTickRate=999\nCommunityNetOption=Enabled",
+        "serverGameLogIncludeTribe": true,
+        "noDinos": true,
+        "noWildBabies": true,
+        "disableCustomCosmetics": true,
+        "unstasisDinoObstructionCheck": true,
+        "useServerNetSpeedCheck": true,
+        "noSound": true
+    });
+    config.as_object_mut().expect("测试配置是对象").extend(
+        game_and_launch
+            .as_object()
+            .expect("Game 与启动配置是对象")
+            .clone(),
+    );
+
+    let game_user_settings = render_game_user_settings(&instance, &config, &[]);
+    let server_settings = game_user_settings
+        .split("[SessionSettings]")
+        .next()
+        .unwrap_or_default();
+    for expected in [
+        "AutoSavePeriodMinutes=21",
+        "DisableStructureDecayPvE=False",
+        "PreventTribeAlliances=True",
+        "AllowHideDamageSourceFromLogs=False",
+        "AllowMultipleAttachedC4=True",
+        "AllowRaidDinoFeeding=True",
+        "ClampItemSpoilingTimes=True",
+        "ClampResourceHarvestDamage=True",
+        "DestroyTamesOverTheSoftTameLimit=True",
+        "DisableImprintDinoBuff=True",
+        "ForceAllStructureLocking=True",
+        "GlobalVoiceChat=True",
+        "PreventMateBoost=True",
+        "PreventOfflinePvP=True",
+        "PreventSpawnAnimations=True",
+        "ProximityChat=True",
+        "DisableDinoDecayPvE=True",
+        "PvPDinoDecay=True",
+        "RandomSupplyCratePoints=True",
+        "ServerForceNoHUD=True",
+        "ShowFloatingDamageText=True",
+        "DontAlwaysNotifyPlayerJoined=True",
+        "DinoCharacterHealthRecoveryMultiplier=1.1",
+        "MaxPersonalTamedDinos=12",
+        "MaxTamedDinos_SoftTameLimit=3456",
+        "MaxTamedDinos_SoftTameLimit_CountdownForDeletionDuration=789",
+        "MaxTributeDinos=22",
+        "MaxTributeItems=55",
+        "OxygenSwimSpeedStatMultiplier=1.2",
+        "PlatformSaddleBuildAreaBoundsMultiplier=1.3",
+        "PlayerCharacterHealthRecoveryMultiplier=1.4",
+        "PreventOfflinePvPInterval=60.5",
+        "PvEDinoDecayPeriodMultiplier=2.5",
+        "StructureResistanceMultiplier=0.75",
+        "InjectedKey=stays-in-server-settings",
+    ] {
+        assert!(
+            server_settings.contains(expected),
+            "ServerSettings 缺少 {expected}"
+        );
+    }
+    assert_eq!(server_settings.matches("CommunityArray=").count(), 2);
+    assert_eq!(server_settings.matches("ServerPVE=").count(), 1);
+    assert!(!game_user_settings.contains("[Injected]"));
+
+    let clamped_tributes = render_game_user_settings(
+        &instance,
+        &json!({ "maxTributeDinos": 999, "maxTributeItems": 1 }),
+        &[],
+    );
+    assert!(clamped_tributes.contains("MaxTributeDinos=273"));
+    assert!(clamped_tributes.contains("MaxTributeItems=50"));
+
+    let game_ini = render_game_ini(&config);
+    for expected in [
+        "bAllowUnlimitedRespecs=True",
+        "bDisablePhotoMode=True",
+        "bShowCreativeMode=True",
+        "bUseDinoLevelUpAnimations=False",
+        "bDisableWirelessCrafting=True",
+        "bDisableFriendlyFire=True",
+        "CraftingSkillBonusMultiplier=1.5",
+        "CraftXPMultiplier=1.6",
+        "CustomRecipeEffectivenessMultiplier=1.7",
+        "CustomRecipeSkillMultiplier=1.8",
+        "GenericXPMultiplier=1.9",
+        "HarvestXPMultiplier=2.1",
+        "KillXPMultiplier=2.2",
+        "SpecialXPMultiplier=2.3",
+        "HairGrowthSpeedMultiplier=0.25",
+        "MaxFallSpeedMultiplier=2.4",
+        "PoopIntervalMultiplier=2.5",
+        "WildDinoCharacterFoodDrainMultiplier=2.6",
+        "PhotoModeRangeLimit=3500.5",
+        "WirelessCraftingRangeOverride=4500.5",
+    ] {
+        assert!(game_ini.contains(expected), "Game.ini 缺少 {expected}");
+    }
+    assert_eq!(game_ini.matches("MatingIntervalMultiplier=").count(), 1);
+    assert_eq!(game_ini.matches("CustomGameArray=").count(), 2);
+    assert!(!game_ini.contains("bPvEAllowTribeWar="));
+
+    let engine_ini = render_engine_ini(&config);
+    assert_eq!(engine_ini.matches("NetServerMaxTickRate=").count(), 1);
+    assert!(engine_ini.contains("CommunityNetOption=Enabled"));
+
+    let launch_arguments = build_launch_arguments(&instance, &config, &[]);
+    for expected in [
+        "-servergamelogincludetribelogs",
+        "-ServerRCONOutputTribeLogs",
+        "-NoDinos",
+        "-NoWildBabies",
+        "-DisableCustomCosmetics",
+        "-UnstasisDinoObstructionCheck",
+        "-UseServerNetSpeedCheck",
+        "-nosound",
+    ] {
+        assert!(launch_arguments.iter().any(|argument| argument == expected));
+    }
+}
+
+#[test]
+fn 应用配置会保留三份_ini_的未知内容并替换托管键组() {
+    let temp = tempfile::tempdir().expect("创建临时目录");
+    let instance = test_instance(temp.path());
+    let directory = config_dir(&instance);
+    fs::create_dir_all(&directory).expect("创建配置目录");
+    fs::write(
+        directory.join("GameUserSettings.ini"),
+        "; GUS 注释\r\n[ServerSettings]\r\nXPMultiplier=99\r\nCommunityOption=One\r\nCommunityOption=Two\r\nCrossARKAllowForeignDinoDownloads=True\r\n[Community.Section]\r\nKeep=Yes\r\n",
+    )
+    .expect("写入旧 GUS");
+    fs::write(
+        directory.join("Game.ini"),
+        "; Game 注释\r\n[/Script/ShooterGame.ShooterGameMode]\r\nMatingIntervalMultiplier=99\r\nConfigOverrideItemMaxQuantity=(Old=One)\r\nUnknownArray=One\r\nConfigOverrideItemMaxQuantity=(Old=Two)\r\nUnknownArray=Two\r\n[Community.Game]\r\nKeep=Yes\r\n",
+    )
+    .expect("写入旧 Game.ini");
+    fs::write(
+        directory.join("Engine.ini"),
+        "; Engine 注释\r\n[/Script/OnlineSubsystemUtils.IpNetDriver]\r\nNetServerMaxTickRate=999\r\nUnknownNet=One\r\nUnknownNet=Two\r\n[Community.Engine]\r\nKeep=Yes\r\n",
+    )
+    .expect("写入旧 Engine.ini");
+    let config = json!({
+        "adminPassword": "admin",
+        "xpMultiplier": 2.5,
+        "matingInterval": 0.5,
+        "networkTickRate": 45,
+        "itemStackOverrides": [
+            {"itemClassString": "PrimalItemResource_Stone_C", "maxItemQuantity": 1000, "ignoreMultiplier": true}
+        ]
+    });
+
+    let applied = apply_instance_config(&instance, &config, &[]).expect("合并配置成功");
+    let gus = fs::read_to_string(applied.game_user_settings_path).expect("读取 GUS");
+    let game = fs::read_to_string(applied.game_ini_path).expect("读取 Game.ini");
+    let engine = fs::read_to_string(applied.engine_ini_path).expect("读取 Engine.ini");
+
+    assert!(gus.contains("; GUS 注释"));
+    assert!(gus.contains("XPMultiplier=2.5"));
+    assert!(!gus.contains("XPMultiplier=99"));
+    assert_eq!(gus.matches("CommunityOption=").count(), 2);
+    assert!(gus.contains("[Community.Section]\r\nKeep=Yes"));
+    assert!(!gus.contains("CrossARKAllowForeignDinoDownloads="));
+
+    assert!(game.contains("; Game 注释"));
+    assert!(game.contains("MatingIntervalMultiplier=0.5"));
+    assert!(!game.contains("MatingIntervalMultiplier=99"));
+    assert_eq!(game.matches("ConfigOverrideItemMaxQuantity=").count(), 1);
+    assert!(!game.contains("Old="));
+    assert_eq!(game.matches("UnknownArray=").count(), 2);
+    assert!(game.contains("[Community.Game]\r\nKeep=Yes"));
+
+    assert!(engine.contains("; Engine 注释"));
+    assert!(engine.contains("NetServerMaxTickRate=45"));
+    assert!(!engine.contains("NetServerMaxTickRate=999"));
+    assert_eq!(engine.matches("UnknownNet=").count(), 2);
+    assert!(engine.contains("[Community.Engine]\r\nKeep=Yes"));
 }

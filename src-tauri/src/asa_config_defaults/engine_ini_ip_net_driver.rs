@@ -13,4 +13,9 @@ pub(super) const DEFAULTS: &[AsaConfigDefault] = &[
         DefaultValue::U32(100000),
         Target::EngineIniIpNetDriver,
     ),
+    default(
+        "customEngineIniSettings",
+        DefaultValue::Text(""),
+        Target::EngineIniIpNetDriver,
+    ),
 ];

@@ -155,7 +155,7 @@ export function filterSearchNode(node: ReactNode, query: string): ReactNode {
     return normalizeSearchText(node).includes(query) ? node : null
   }
   if (Array.isArray(node)) {
-    const filtered = node.map((child) => filterSearchNode(child, query)).filter(hasRenderableNode)
+    const filtered = Children.toArray(node).map((child) => filterSearchNode(child, query)).filter(hasRenderableNode)
     return filtered.length > 0 ? filtered : null
   }
   if (!isValidElement(node)) return null

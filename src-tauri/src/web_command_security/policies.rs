@@ -48,6 +48,11 @@ const WEB_COMMAND_POLICIES: &[WebCommandPolicy] = &[
     ),
     policy("check_mod_updates", "检查 MOD 更新", WebCommandRisk::Read),
     policy(
+        "search_curseforge_mods",
+        "搜索 CurseForge 官方 MOD",
+        WebCommandRisk::Read,
+    ),
+    policy(
         "refresh_instance_status",
         "刷新实例状态",
         WebCommandRisk::Read,

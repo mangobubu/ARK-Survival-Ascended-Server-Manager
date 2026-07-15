@@ -4,6 +4,7 @@ import type {
   AddInstancePayload,
   AsaConfigMetadataDocument,
   BackupItem,
+  CurseForgeModSearchResult,
   ExportResult,
   GlobalSettings,
   HostDirectoryListing,
@@ -235,6 +236,9 @@ export const updateInstanceMods = (instanceId: string, mods: ModItem[]) =>
   invokeCommand<ModItem[]>('update_instance_mods', { instanceId, mods })
 
 export const checkModUpdates = (mods: ModItem[]) => invokeCommand<ModItem[]>('check_mod_updates', { mods })
+
+export const searchCurseForgeMods = (query: string, index: number, pageSize: number) =>
+  invokeCommand<CurseForgeModSearchResult>('search_curseforge_mods', { query, index, pageSize })
 
 export const installOrUpdateInstance = (instanceId: string, onProgress: (progress: JobProgress) => void) => {
   if (!isTauriRuntime()) return invokeCommand<ServerInstance>('install_or_update_instance', { instanceId })

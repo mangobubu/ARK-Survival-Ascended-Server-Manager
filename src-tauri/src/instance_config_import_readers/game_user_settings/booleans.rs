@@ -11,9 +11,31 @@ pub(super) fn read_boolean_settings(document: &IniDocument, config: &mut Map<Str
         ("RCONEnabled", "rconEnabled"),
         ("ServerPVE", "pve"),
         ("ServerHardcore", "hardcore"),
-        ("DisableFriendlyFire", "disableFriendlyFire"),
         ("EnablePVPGamma", "enablePvPGamma"),
         ("AllowHitMarkers", "allowHitMarkers"),
+        (
+            "AllowHideDamageSourceFromLogs",
+            "allowHideDamageSourceFromLogs",
+        ),
+        ("AllowMultipleAttachedC4", "allowMultipleAttachedC4"),
+        ("AllowRaidDinoFeeding", "allowRaidDinoFeeding"),
+        ("ClampItemSpoilingTimes", "clampItemSpoilingTimes"),
+        ("ClampResourceHarvestDamage", "clampResourceHarvestDamage"),
+        (
+            "DestroyTamesOverTheSoftTameLimit",
+            "destroyTamesOverSoftTameLimit",
+        ),
+        ("DisableImprintDinoBuff", "disableImprintDinoBuff"),
+        ("ForceAllStructureLocking", "forceAllStructureLocking"),
+        ("GlobalVoiceChat", "globalVoiceChat"),
+        ("PreventMateBoost", "preventMateBoost"),
+        ("PreventOfflinePvP", "preventOfflinePvP"),
+        ("PreventSpawnAnimations", "preventSpawnAnimations"),
+        ("ProximityChat", "proximityChat"),
+        ("PvPDinoDecay", "pvpDinoDecay"),
+        ("RandomSupplyCratePoints", "randomSupplyCratePoints"),
+        ("ServerForceNoHUD", "serverForceNoHud"),
+        ("ShowFloatingDamageText", "showFloatingDamageText"),
         ("AllowThirdPersonPlayer", "thirdPerson"),
         ("ServerCrosshair", "crosshair"),
         ("ShowMapPlayerLocation", "showMapPlayer"),
@@ -89,4 +111,15 @@ pub(super) fn read_boolean_settings(document: &IniDocument, config: &mut Map<Str
         "PreventDiseases",
         "enableDiseases",
     );
+    for (ini_key, config_key) in [
+        ("DisableStructureDecayPvE", "pveStructureDecay"),
+        ("PreventTribeAlliances", "tribeAlliances"),
+        ("DisableDinoDecayPvE", "pveDinoDecay"),
+        (
+            "DontAlwaysNotifyPlayerJoined",
+            "showPlayerJoinNotifications",
+        ),
+    ] {
+        map_bool_inverted(document, config, SERVER_SETTINGS, ini_key, config_key);
+    }
 }

@@ -1,4 +1,6 @@
-use crate::ark_config_values::{bool_value, ini_bool, number_f64, number_u32};
+use crate::ark_config_values::{
+    append_custom_ini_settings, bool_value, ini_bool, number_f64, number_u32,
+};
 use serde_json::Value;
 
 pub(crate) fn render_game_ini(config: &Value) -> String {
@@ -89,12 +91,88 @@ pub(crate) fn render_game_ini(config: &Value) -> String {
             number_f64(config, "globalCorpseDecompositionTimeMultiplier", 1.0)
         ),
         format!(
+            "CraftingSkillBonusMultiplier={}",
+            number_f64(config, "craftingSkillBonusMultiplier", 1.0)
+        ),
+        format!(
+            "CraftXPMultiplier={}",
+            number_f64(config, "craftXpMultiplier", 1.0)
+        ),
+        format!(
+            "CustomRecipeEffectivenessMultiplier={}",
+            number_f64(config, "customRecipeEffectivenessMultiplier", 1.0)
+        ),
+        format!(
+            "CustomRecipeSkillMultiplier={}",
+            number_f64(config, "customRecipeSkillMultiplier", 1.0)
+        ),
+        format!(
+            "GenericXPMultiplier={}",
+            number_f64(config, "genericXpMultiplier", 1.0)
+        ),
+        format!(
+            "HarvestXPMultiplier={}",
+            number_f64(config, "harvestXpMultiplier", 1.0)
+        ),
+        format!(
+            "KillXPMultiplier={}",
+            number_f64(config, "killXpMultiplier", 1.0)
+        ),
+        format!(
+            "SpecialXPMultiplier={}",
+            number_f64(config, "specialXpMultiplier", 1.0)
+        ),
+        format!(
+            "HairGrowthSpeedMultiplier={}",
+            number_f64(config, "hairGrowthSpeedMultiplier", 0.0)
+        ),
+        format!(
+            "MaxFallSpeedMultiplier={}",
+            number_f64(config, "maxFallSpeedMultiplier", 1.0)
+        ),
+        format!(
+            "PoopIntervalMultiplier={}",
+            number_f64(config, "poopIntervalMultiplier", 1.0)
+        ),
+        format!(
+            "WildDinoCharacterFoodDrainMultiplier={}",
+            number_f64(config, "wildDinoFoodDrainMultiplier", 1.0)
+        ),
+        format!(
+            "PhotoModeRangeLimit={}",
+            number_f64(config, "photoModeRangeLimit", 3000.0)
+        ),
+        format!(
+            "WirelessCraftingRangeOverride={}",
+            number_f64(config, "wirelessCraftingRangeOverride", 3000.0)
+        ),
+        format!(
             "bDisableStructurePlacementCollision={}",
             ini_bool(bool_value(config, "disablePlacementCollision", false))
         ),
         format!(
             "bAllowSpeedLeveling={}",
             ini_bool(bool_value(config, "allowSpeedLeveling", false))
+        ),
+        format!(
+            "bAllowUnlimitedRespecs={}",
+            ini_bool(bool_value(config, "allowUnlimitedRespecs", false))
+        ),
+        format!(
+            "bDisablePhotoMode={}",
+            ini_bool(bool_value(config, "disablePhotoMode", false))
+        ),
+        format!(
+            "bShowCreativeMode={}",
+            ini_bool(bool_value(config, "showCreativeMode", false))
+        ),
+        format!(
+            "bUseDinoLevelUpAnimations={}",
+            ini_bool(bool_value(config, "useDinoLevelUpAnimations", true))
+        ),
+        format!(
+            "bDisableWirelessCrafting={}",
+            ini_bool(bool_value(config, "disableWirelessCrafting", false))
         ),
         format!(
             "MaxNumberOfPlayersInTribe={}",
@@ -121,8 +199,8 @@ pub(crate) fn render_game_ini(config: &Value) -> String {
             number_u32(config, "maxTribesPerAlliance", 0)
         ),
         format!(
-            "bPvEAllowTribeWar={}",
-            ini_bool(bool_value(config, "tribeAlliances", true))
+            "bDisableFriendlyFire={}",
+            ini_bool(bool_value(config, "disableFriendlyFirePvP", false))
         ),
         format!(
             "bPvEDisableFriendlyFire={}",
@@ -131,6 +209,7 @@ pub(crate) fn render_game_ini(config: &Value) -> String {
     ];
 
     lines.extend(render_item_stack_override_lines(config));
+    append_custom_ini_settings(&mut lines, config, "customGameIniSettings");
     lines.push(String::new());
     lines.join("\r\n")
 }
@@ -184,7 +263,7 @@ fn positive_u32(value: Option<&Value>, fallback: u32) -> u32 {
 }
 
 pub(crate) fn render_engine_ini(config: &Value) -> String {
-    let lines = [
+    let mut lines = vec![
         "[/Script/OnlineSubsystemUtils.IpNetDriver]".to_string(),
         format!(
             "NetServerMaxTickRate={}",
@@ -194,7 +273,8 @@ pub(crate) fn render_engine_ini(config: &Value) -> String {
             "MaxClientRate={}",
             number_u32(config, "maxClientRate", 100000)
         ),
-        String::new(),
     ];
+    append_custom_ini_settings(&mut lines, config, "customEngineIniSettings");
+    lines.push(String::new());
     lines.join("\r\n")
 }

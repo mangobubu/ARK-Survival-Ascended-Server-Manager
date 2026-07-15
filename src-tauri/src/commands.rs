@@ -10,14 +10,13 @@ use crate::{
     command_events::{
         emit_instance_log, publish_instances_changed, publish_sync_event_best_effort,
     },
-    instance_config_commands,
     models::{
         AddInstancePayload, JobProgress, LogLine, LogSource, ModItem, ServerInstance, ServerLogKind,
     },
     path_security,
     server_lifecycle::{
-        refresh_status_for_runtime, restart_instance_for_runtime, start_instance_for_runtime,
-        stop_instance_for_runtime,
+        apply_instance_config_and_restart_for_runtime, refresh_status_for_runtime,
+        restart_instance_for_runtime, start_instance_for_runtime, stop_instance_for_runtime,
     },
     server_rcon,
     server_version::with_current_server_version,
@@ -83,8 +82,7 @@ pub async fn apply_instance_config(
     mods: Vec<ModItem>,
 ) -> Result<ServerInstance, String> {
     let runtime = runtime.inner().clone();
-    instance_config_commands::save_config_for_runtime(&app, &runtime, &instance_id, config, mods)?;
-    restart_instance_for_runtime(app, runtime, instance_id).await
+    apply_instance_config_and_restart_for_runtime(app, runtime, instance_id, config, mods).await
 }
 
 #[tauri::command]

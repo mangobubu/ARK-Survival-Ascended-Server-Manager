@@ -1,7 +1,8 @@
 use super::support::{required_arg, to_json};
 use crate::{
-    app_state::AppRuntime, instance_config_commands, instance_data_commands, models::ModItem,
-    server_lifecycle::restart_instance_for_runtime, server_version::with_current_server_version,
+    app_state::AppRuntime, curseforge, instance_config_commands, instance_data_commands,
+    models::ModItem, server_lifecycle::apply_instance_config_and_restart_for_runtime,
+    server_version::with_current_server_version,
 };
 use serde_json::Value;
 use tauri::AppHandle;
@@ -48,7 +49,7 @@ pub(super) fn save_instance_config(
     let config: Value = required_arg(args, "config")?;
     let mods: Vec<ModItem> = required_arg(args, "mods")?;
     to_json(with_current_server_version(
-        instance_config_commands::save_config_for_runtime(
+        instance_config_commands::save_config_with_operation_for_runtime(
             app,
             runtime,
             &instance_id,
@@ -66,8 +67,10 @@ pub(super) async fn apply_instance_config(
     let instance_id: String = required_arg(args, "instanceId")?;
     let config: Value = required_arg(args, "config")?;
     let mods: Vec<ModItem> = required_arg(args, "mods")?;
-    instance_config_commands::save_config_for_runtime(&app, &runtime, &instance_id, config, mods)?;
-    to_json(restart_instance_for_runtime(app, runtime, instance_id).await?)
+    to_json(
+        apply_instance_config_and_restart_for_runtime(app, runtime, instance_id, config, mods)
+            .await?,
+    )
 }
 
 pub(super) fn update_instance_mods(
@@ -77,16 +80,33 @@ pub(super) fn update_instance_mods(
 ) -> Result<Value, String> {
     let instance_id: String = required_arg(args, "instanceId")?;
     let mods: Vec<ModItem> = required_arg(args, "mods")?;
-    to_json(instance_config_commands::update_instance_mods_for_runtime(
-        app,
-        runtime,
-        &instance_id,
-        mods,
-    )?)
+    to_json(
+        instance_config_commands::update_instance_mods_with_operation_for_runtime(
+            app,
+            runtime,
+            &instance_id,
+            mods,
+        )?,
+    )
 }
 
 pub(super) fn check_mod_updates(args: &Value) -> Result<Value, String> {
     to_json(instance_config_commands::check_mod_updates_for_runtime(
         required_arg(args, "mods")?,
     )?)
+}
+
+pub(super) async fn search_curseforge_mods(
+    runtime: &AppRuntime,
+    args: &Value,
+) -> Result<Value, String> {
+    to_json(
+        curseforge::search_curseforge_mods_for_runtime(
+            runtime,
+            required_arg(args, "query")?,
+            required_arg(args, "index")?,
+            required_arg(args, "pageSize")?,
+        )
+        .await?,
+    )
 }

@@ -14,6 +14,15 @@ pub(super) fn read_numeric_settings(document: &IniDocument, config: &mut Map<Str
 fn read_u32_settings(document: &IniDocument, config: &mut Map<String, Value>) {
     for (ini_key, config_key) in [
         ("MaxTamedDinos", "maxTamedDinos"),
+        ("MaxPersonalTamedDinos", "maxPersonalTamedDinos"),
+        ("MaxTamedDinos_SoftTameLimit", "maxTamedDinosSoftTameLimit"),
+        (
+            "MaxTamedDinos_SoftTameLimit_CountdownForDeletionDuration",
+            "maxTamedDinosSoftTameLimitCountdown",
+        ),
+        ("MaxTributeDinos", "maxTributeDinos"),
+        ("MaxTributeItems", "maxTributeItems"),
+        ("AutoSavePeriodMinutes", "saveInterval"),
         ("TheMaxStructuresInRange", "structureLimit"),
         ("RCONServerGameLogBuffer", "rconBufferSize"),
         ("KickIdlePlayersPeriod", "kickIdlePlayersPeriod"),
@@ -72,6 +81,18 @@ fn read_f64_settings(document: &IniDocument, config: &mut Map<String, Value>) {
             "DinoCharacterStaminaDrainMultiplier",
             "dinoStaminaDrainMultiplier",
         ),
+        (
+            "DinoCharacterHealthRecoveryMultiplier",
+            "dinoHealthRecoveryMultiplier",
+        ),
+        (
+            "PlayerCharacterHealthRecoveryMultiplier",
+            "playerHealthRecoveryMultiplier",
+        ),
+        (
+            "OxygenSwimSpeedStatMultiplier",
+            "oxygenSwimSpeedStatMultiplier",
+        ),
         ("DayCycleSpeedScale", "dayCycleSpeed"),
         ("DayTimeSpeedScale", "dayTimeSpeed"),
         ("NightTimeSpeedScale", "nightTimeSpeed"),
@@ -120,6 +141,19 @@ fn read_f64_settings(document: &IniDocument, config: &mut Map<String, Value>) {
         (
             "PerPlatformMaxStructuresMultiplier",
             "platformStructureMultiplier",
+        ),
+        (
+            "PlatformSaddleBuildAreaBoundsMultiplier",
+            "platformSaddleBuildAreaBoundsMultiplier",
+        ),
+        ("PreventOfflinePvPInterval", "preventOfflinePvPInterval"),
+        (
+            "PvEDinoDecayPeriodMultiplier",
+            "pveDinoDecayPeriodMultiplier",
+        ),
+        (
+            "StructureResistanceMultiplier",
+            "structureResistanceMultiplier",
         ),
         (
             "EnemyAccessBunkerHPThreshold",

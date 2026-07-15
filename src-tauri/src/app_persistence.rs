@@ -109,6 +109,28 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn curseforge_api_key_写入_config_toml_前会使用_dpapi_保护() {
+        let temp = tempfile::tempdir().expect("创建临时目录");
+        let mut data = ManagerData::default();
+        data.settings.curseforge_api_key = "curseforge-secret-key-123".to_string();
+
+        write_data(temp.path(), &data).expect("写入配置");
+
+        let config_toml =
+            fs::read_to_string(temp.path().join(SETTINGS_FILE_NAME)).expect("读取 config.toml");
+        assert!(!config_toml.contains("curseforge-secret-key-123"));
+        assert!(config_toml.contains("curseforgeApiKey = \"asa-dpapi-v1$"));
+        assert!(!settings_config_contains_unprotected_secret(temp.path()).expect("检查明文凭据"));
+
+        let loaded = read_data(temp.path()).expect("读取加密配置");
+        assert_eq!(
+            loaded.settings.curseforge_api_key,
+            "curseforge-secret-key-123"
+        );
+    }
+
     #[test]
     fn 能识别旧版明文腾讯云_secret_key_需要重写保护() {
         let temp = tempfile::tempdir().expect("创建临时目录");

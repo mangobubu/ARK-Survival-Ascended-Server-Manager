@@ -122,9 +122,36 @@ pub fn build_launch_arguments(
         &mut args,
         config,
         "serverGameLogIncludeTribe",
+        "-servergamelogincludetribelogs",
+    );
+    push_flag(
+        &mut args,
+        config,
+        "serverGameLogIncludeTribe",
         "-ServerRCONOutputTribeLogs",
     );
     push_flag(&mut args, config, "destroyWildDinos", "-ForceRespawnDinos");
+    push_flag(&mut args, config, "noDinos", "-NoDinos");
+    push_flag(&mut args, config, "noWildBabies", "-NoWildBabies");
+    push_flag(
+        &mut args,
+        config,
+        "disableCustomCosmetics",
+        "-DisableCustomCosmetics",
+    );
+    push_flag(
+        &mut args,
+        config,
+        "unstasisDinoObstructionCheck",
+        "-UnstasisDinoObstructionCheck",
+    );
+    push_flag(
+        &mut args,
+        config,
+        "useServerNetSpeedCheck",
+        "-UseServerNetSpeedCheck",
+    );
+    push_flag(&mut args, config, "noSound", "-nosound");
     if bool_value(config, "whitelist", false) || bool_value(config, "exclusiveJoin", false) {
         args.push("-exclusivejoin".to_string());
     }

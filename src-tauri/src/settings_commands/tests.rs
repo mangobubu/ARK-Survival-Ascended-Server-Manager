@@ -48,6 +48,27 @@ fn public_settings_never_exposes_tencent_secret_key() {
 }
 
 #[test]
+fn public_settings_never_exposes_curseforge_api_key() {
+    let settings = GlobalSettings {
+        curseforge_api_key: "curseforge-secret-key".to_string(),
+        ..GlobalSettings::default()
+    };
+
+    let payload = public_settings(settings).expect("生成脱敏设置");
+
+    assert_eq!(
+        payload.get("curseforgeApiKey").and_then(Value::as_str),
+        Some("")
+    );
+    assert_eq!(
+        payload
+            .get("curseforgeApiKeyConfigured")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+}
+
+#[test]
 fn save_settings_hashes_new_web_admin_password() {
     let current = GlobalSettings::default();
     let mut incoming = current.clone();
@@ -99,6 +120,20 @@ fn save_settings_blank_tencent_secret_key_preserves_existing_secret() {
         prepared.web_acme_tencent_secret_key,
         current.web_acme_tencent_secret_key
     );
+}
+
+#[test]
+fn save_settings_blank_curseforge_api_key_preserves_existing_secret() {
+    let current = GlobalSettings {
+        curseforge_api_key: "old-curseforge-key".to_string(),
+        ..GlobalSettings::default()
+    };
+    let mut incoming = current.clone();
+    incoming.curseforge_api_key.clear();
+
+    let prepared = prepare_settings_for_save(&current, incoming).expect("准备保存空 API Key 设置");
+
+    assert_eq!(prepared.curseforge_api_key, current.curseforge_api_key);
 }
 
 #[test]
