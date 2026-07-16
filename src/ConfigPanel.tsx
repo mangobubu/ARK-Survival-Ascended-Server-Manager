@@ -18,6 +18,7 @@ import {
   SettingOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons'
+import type { MouseEvent } from 'react'
 import {
   Alert,
   Avatar,
@@ -38,10 +39,12 @@ import {
   Tag,
   Tooltip,
   Typography,
+  message,
 } from 'antd'
 import { activeEventOptions } from './data'
 import { searchCurseForgeMods } from './backendApi'
 import { arkStackableItemOptions } from './arkStackableItemOptions'
+import { openExternalLink } from './externalLinks'
 import {
   AccordionGroup,
   Field,
@@ -99,6 +102,7 @@ interface ConfigPanelProps {
 }
 
 export default function ConfigPanel({ instance, config, mods, dirty, language, onConfigChange, onModsChange, onSave, onApply, onCheckModUpdates, checkingMods = false, configOperation = null, actionsDisabled = false }: ConfigPanelProps) {
+  const [messageApi, contextHolder] = message.useMessage()
   const [modModalOpen, setModModalOpen] = useState(false)
   const [itemStackModalOpen, setItemStackModalOpen] = useState(false)
   const [modSearch, setModSearch] = useState('')
@@ -130,6 +134,13 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
   const selectedOnCurrentPage = selectableCatalogMods.filter((mod) => selectedCatalogModIds.has(mod.id)).length
   const allCurrentPageSelected = selectableCatalogMods.length > 0
     && selectedOnCurrentPage === selectableCatalogMods.length
+
+  const handleExternalLinkClick = (event: MouseEvent<HTMLElement>, url: string) => {
+    event.preventDefault()
+    void openExternalLink(url).catch((error) => {
+      void messageApi.error(`无法打开外部链接：${String(error)}`)
+    })
+  }
 
   useEffect(() => {
     if (!modModalOpen) return
@@ -773,6 +784,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
 
   return (
     <div className="config-panel">
+      {contextHolder}
       <div className="config-panel__title">
         <div className="config-title-text"><span className="ark-mark">✣</span><span>实例配置编辑</span><span className="config-title-separator">/</span><strong>{instance.name}</strong><span>·</span><span>{instance.map}</span></div>
         <Space>
@@ -930,6 +942,7 @@ export default function ConfigPanel({ instance, config, mods, dirty, language, o
                             icon={<LinkOutlined />}
                             href={item.websiteUrl}
                             target="_blank"
+                            onClick={(event) => handleExternalLinkClick(event, item.websiteUrl)}
                           />
                         </Tooltip>
                       </div>

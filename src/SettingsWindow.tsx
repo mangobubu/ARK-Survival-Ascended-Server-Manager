@@ -11,10 +11,12 @@ import {
   SaveOutlined,
   SettingOutlined,
 } from '@ant-design/icons'
+import type { MouseEvent } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Button, Form, Input, InputNumber, Popover, Radio, Select, Space, Switch, Tag, Typography, message } from 'antd'
 import { checkSteamCmd, getWebAcmeCertificateStatus, listWebSecurityBans, unbanWebSecurityIp } from './backendApi'
+import { openExternalLink } from './externalLinks'
 import { loadGlobalSettings, loadGlobalSettingsFromBackend, saveGlobalSettings } from './globalSettings'
 import { isTauriRuntime } from './runtime'
 import SettingsWebAccessSection from './SettingsWebAccessSection'
@@ -29,6 +31,8 @@ import {
 } from './settingsWindowUtils'
 
 const { Text, Title } = Typography
+
+const CURSEFORGE_API_KEY_URL = 'https://support.curseforge.com/en/support/solutions/articles/9000208346-about-the-curseforge-api-and-how-to-apply-for-a-key'
 
 interface SettingsWindowProps {
   onClose?: () => void
@@ -81,6 +85,13 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps = {}) {
       return
     }
     if (isTauriRuntime()) void getCurrentWindow().close()
+  }
+
+  const handleExternalLinkClick = (event: MouseEvent<HTMLElement>, url: string) => {
+    event.preventDefault()
+    void openExternalLink(url).catch((error) => {
+      void messageApi.error(`无法打开外部链接：${String(error)}`)
+    })
   }
 
   const loadSecurityBans = useCallback(async () => {
@@ -405,7 +416,7 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps = {}) {
                   />
                 </Form.Item>
                 <Text type="secondary">
-                  可在 <a href="https://support.curseforge.com/en/support/solutions/articles/9000208346-about-the-curseforge-api-and-how-to-apply-for-a-key" target="_blank" rel="noreferrer">CurseForge 官方申请页</a>获取 API Key
+                  可在 <a href={CURSEFORGE_API_KEY_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, CURSEFORGE_API_KEY_URL)}>CurseForge 官方申请页</a>获取 API Key
                 </Text>
               </div>
             </section>

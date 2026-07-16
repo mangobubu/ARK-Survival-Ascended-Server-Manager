@@ -13,6 +13,17 @@
     "core:webview:default",
     "core:webview:allow-create-webview-window",
     "core:window:allow-get-all-windows",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://curseforge.com/*"
+        },
+        {
+          "url": "https://*.curseforge.com/*"
+        }
+      ]
+    }
   ]
 }

@@ -91,6 +91,7 @@ fn app_version() -> &'static str {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let runtime = app_state::AppRuntime::load(app.handle())
                 .map_err(Box::<dyn std::error::Error>::from)?;
